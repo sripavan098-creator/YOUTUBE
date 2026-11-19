@@ -1,0 +1,9 @@
+.env
+tokens/
+out/
+engine.db
+node_modules/
+remotion/public/a/
+remotion/public/w/
+__pycache__/
+*.pyc

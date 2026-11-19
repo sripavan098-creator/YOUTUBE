@@ -1,0 +1,43 @@
+# v2: 2 channels, 4 stories/day each, audience-fit assignment, 4 rotating layouts.
+#
+# Structural changes from v1 that the rest of the code depends on:
+#   - `channels` (not `langs`): a channel owns its brand, voice and audience, so the
+#     same story can be re-angled per channel instead of translated into each language.
+#   - `db.stories` is keyed by (channel, url), so one story can be covered by both
+#     channels without the second one being skipped as a duplicate.
+#   - `yt_public_after_audit` gates public scheduling. While false every upload is
+#     private with no publishAt, because an unaudited Cloud project cannot publish.
+channels:
+  hi:
+    handle: "@vincodez"
+    brand: Vincodez Tech
+    color: "#FF6B00"
+    accent: "#FFD166"
+    voice: hi-IN-MadhurNeural
+    rate: "+8%"
+    lang: hi
+    audience: india
+    yt_start: "18:00"
+    cta: "Guide ka link bio mein hai. Roz follow karo"
+    monet_link: "https://yourinstamojo.com/vincodez-guides"
+  te:
+    handle: "@sripavan9878"
+    brand: Tech Muchatlu
+    color: "#06B6D4"
+    accent: "#FFFFFF"
+    voice: te-IN-MohanNeural
+    rate: "+8%"
+    lang: te
+    audience: south_india
+    yt_start: "17:30"
+    cta: "Guide link bio lo undi. Follow avvandi"
+    monet_link: "https://yourinstamojo.com/techmuchatlu-guides"
+
+stories_per_channel: 4
+longform_per_week: 2
+layouts: [list, explainer, versus, timeline]
+model_primary: openai/gpt-oss-120b
+model_fallback: gemini-2.5-flash
+ig_daily: 3
+yt_step_min: 20
+yt_public_after_audit: false

@@ -1,0 +1,11 @@
+feedparser
+trafilatura
+edge-tts
+openai
+requests
+google-api-python-client
+google-auth-oauthlib
+schedule
+python-dotenv
+mutagen
+pyyaml
