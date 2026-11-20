@@ -42,12 +42,28 @@ from pipeline import (audio, db, publish_ig, publish_yt, refresh_ig, render, rev
                       scripts, sources, timing, visuals, voice, longform)
 
 def _clean_dict(script):
-    """Strip control characters YouTube rejects. The multi-line description keeps its
-    line breaks; every other field is flattened to one line."""
-    out = _sanitize_metadata({k: v for k, v in script.items() if k != "description"})
+    """Bulletproof sanitizer: Nukes ALL control characters from metadata."""
+    def nuke(obj):
+        if isinstance(obj, dict):
+            return {k: nuke(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [nuke(v) for v in obj]
+        elif isinstance(obj, str):
+            # Nuke ALL control characters except newlines in descriptions
+            cleaned = ""
+            for ch in obj:
+                code = ord(ch)
+                if code < 32 and code not in (10, 13):  # keep \n and \r
+                    continue
+                if 127 <= code <= 159:
+                    continue
+                cleaned += ch
+            return cleaned.strip()
+        return obj
+    
+    out = nuke({k: v for k, v in script.items() if k != "description"})
     if script.get("description"):
-        out["description"] = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "",
-                                    script["description"]).strip()
+        out["description"] = nuke(script["description"])
     return out
 
 

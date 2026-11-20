@@ -10,3 +10,10 @@ __pycache__/
 *.pyc
 assets/sfx/_whoosh_generated.wav
 videos.zip
+.env
+tokens/
+client_secret.json
+manual_auth.py
+force_auth.py
+force_auth_hi.py
+auth_both.py
