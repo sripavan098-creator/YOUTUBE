@@ -1,5 +1,31 @@
 import datetime
 import pathlib
+
+import os
+import re
+
+# Robust .env loader for Python 3.14 compatibility
+_env_path = pathlib.Path(__file__).parent.parent / ".env"
+if _env_path.exists():
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ[_k.strip()] = _v.strip().strip('"').strip("'")
+
+def _sanitize_metadata(obj):
+    if isinstance(obj, dict):
+        return {k: _sanitize_metadata(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_metadata(v) for v in obj]
+    elif isinstance(obj, str):
+        obj = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', obj)
+        obj = obj.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+        obj = re.sub(r'\s+', ' ', obj).strip()
+        return obj
+    return obj
+
 import sys
 import time
 
