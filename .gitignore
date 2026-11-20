@@ -8,3 +8,5 @@ remotion/public/a/
 remotion/public/w/
 __pycache__/
 *.pyc
+assets/sfx/_whoosh_generated.wav
+videos.zip

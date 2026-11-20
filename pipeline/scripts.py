@@ -1,3 +1,11 @@
+"""Two-stage script writing.
+
+Stage 1 (propose_angles): cheap, English. Three distinct takes per story plus the facts
+the source actually supports. The editor picks a take on Telegram.
+Stage 2 (write_script): only for the picked take, once per channel. Writes natively in
+the channel's language as timed BEATS (one spoken line + one stock-footage query each),
+validates the result against retention rules, and retries with the exact failure reason.
+"""
 import json
 import os
 import random
@@ -9,26 +17,66 @@ from openai import OpenAI
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-SYS_ANGLES = """You are a top-tier Indian tech YouTuber. For the SOURCE story, propose 3 DISTINCT angles.
+# ---------------------------------------------------------------- stage 1: angles
+
+SYS_ANGLES = """You are the head of content for a viral Indian tech Shorts channel.
+For the SOURCE story, propose 3 DISTINCT angles. Each angle is a different reason a viewer
+would care, not a rewording of the same headline. Pick from: money/jobs impact on an
+Indian viewer, 'this changes what you use daily', hidden catch / what they are not telling
+you, David-vs-Goliath, 'what happens next' prediction, myth-busting.
 
 Return STRICT JSON:
-{
-  "angles": [
-    {"angle_id": "A", "take": "one-line unique take", "shots": ["4 English stock-footage keywords"],
-     "hi": {"title": "...", "script": "...", "hashtags": ["#AI", "#TechNews", "#shorts"]},
-     "te": {"title": "...", "script": "...", "hashtags": ["..."]}},
-    {"angle_id": "B", ...}, {"angle_id": "C", ...}
-  ]
-}
+{"angles": [
+  {"angle_id": "A", "take": "one line, <=14 words, the unique claim of this angle",
+   "hook_idea": "the single most scroll-stopping first sentence, in English",
+   "key_facts": ["3-5 short facts that appear in the SOURCE. No outside facts."]},
+  {"angle_id": "B", ...}, {"angle_id": "C", ...}
+]}
+Facts must be traceable to the SOURCE text. If the source is thin, use fewer facts.
+Return ONLY raw JSON. No markdown, no code fences."""
 
-RULES FOR SCRIPT (CRITICAL):
-1. HOOK: First sentence MUST be under 8 words. Shocking, curious, or direct. NO "Namaste", NO "Welcome", NO "Today we will talk about".
-2. LANGUAGE: Write EXACTLY like a normal person talking to a friend at a chai tapri. Use simple, conversational Hindi/Telugu.
-3. TRANSLITERATION: Use English tech words written in native script (e.g., in Hindi: "एआई", "गूगल", "स्मार्टफोन").
-4. LENGTH: 70-90 words MAX. Short, punchy sentences. End with a question.
-5. NO FLUFF: Never invent facts.
+# ---------------------------------------------------------------- stage 2: script
+
+SYS_WRITE = """You write 30-40 second vertical-video scripts that win on RETENTION.
+You are writing in {lang_name} for the channel "{brand}" (audience: {audience}).
+
+Return STRICT JSON:
+{{
+ "title": "<=60 chars, {lang_name}, a curiosity gap or a concrete stake, never a summary",
+ "hook_text": "2-5 words shown huge on screen in the first 2 seconds, {lang_name}",
+ "beats": [{{"line": "one spoken sentence in {lang_name}", "shot": "2-4 English words for stock footage"}}],
+ "emphasis": ["up to 8 single words copied exactly from the lines that deserve color"],
+ "description": "2 lines. Line 1 has the main keyword and the hook. Line 2 asks a question.",
+ "ig_caption": "hook line, blank line, 2 short lines, a question, blank line, 5 hashtags",
+ "hashtags": ["#shorts", "...5-7 tags, mix of broad and specific"]
+}}
+
+STRUCTURE (this order is the whole point):
+1. beats[0] is the HOOK: 8 words or fewer. Open a loop the viewer must see closed. Use a
+   shock, a number, a threat to their money/job/phone, or a direct "you". Never greet.
+   Never start with "Today", "Hello", "Namaste", "Welcome" or the channel name.
+2. beats[1-2]: the concrete fact, with the one number or name that makes it real.
+3. A RE-HOOK around the middle: a turn like "But here is the catch" (in {lang_name}) so
+   attention resets exactly where people swipe away.
+4. beats[-2]: the payoff that closes the loop opened in beat 0.
+5. beats[-1]: a question that invites a comment AND echoes the first beat so the video
+   loops cleanly when it replays.
+
+STYLE:
+- Spoken, like a friend at a chai stall. Tech nouns in {lang_name} script (e.g. AI, Google).
+- 6 to 9 beats, each 5 to 14 words. Total 60-95 words. Short punchy sentences.
+- Every beat must give NEW information or a new emotion. No filler, no recap.
+- Use ONLY facts from KEY_FACTS and SOURCE. Never invent numbers, quotes or dates.
+- 'shot' must be something a stock library actually has and that matches the line
+  (concrete: "phone screen", "stock market board", "server room"), never abstract nouns.
+- Do not repeat the same shot query twice.
 
 Return ONLY raw JSON. No markdown, no code fences."""
+
+LANG_NAME = {"hi": "Hindi (Devanagari, casual Hinglish register)",
+             "te": "Telugu (Telugu script, casual spoken register)",
+             "en": "English"}
+
 
 def _extract_json(text):
     t = (text or "").strip()
@@ -41,125 +89,209 @@ def _extract_json(text):
     return json.loads(t[start:end + 1])
 
 
-def _salvage_angles(text):
-    """Recover complete angle objects from truncated JSON output."""
-    i = text.find('"angles"')
-    if i == -1:
-        return []
-    j = text.find("[", i)
-    if j == -1:
-        return []
-    out, depth, start = [], 0, None
-    for k in range(j + 1, len(text)):
-        ch = text[k]
-        if ch == "{":
-            if depth == 0:
-                start = k
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0 and start is not None:
-                try:
-                    out.append(json.loads(text[start:k + 1]))
-                except Exception:
-                    pass
-                start = None
-    return out
-
-def _groq(prompt, model):
-    c = OpenAI(api_key=os.environ["GROQ_API_KEY"], base_url="https://api.groq.com/openai/v1", timeout=60)
+def _groq(system, prompt, model, temperature=0.7):
+    c = OpenAI(api_key=os.environ["GROQ_API_KEY"], base_url="https://api.groq.com/openai/v1",
+               timeout=60)
     kwargs = {}
     if "gpt-oss" in model:
-        kwargs["extra_body"] = {"reasoning_effort": "low"}
+        kwargs["extra_body"] = {"reasoning_effort": "medium"}
     r = c.chat.completions.create(
-        model=model, temperature=0.7, max_tokens=8000,
-        messages=[{"role": "system", "content": SYS_ANGLES},
+        model=model, temperature=temperature, max_tokens=4000,
+        messages=[{"role": "system", "content": system},
                   {"role": "user", "content": prompt}], **kwargs)
     return r.choices[0].message.content
 
-def _gemini(prompt, model):
+
+def _gemini(system, prompt, model, temperature=0.7):
     r = requests.post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-        json={"contents": [{"parts": [{"text": SYS_ANGLES + "\n\n" + prompt}]}],
-              "generationConfig": {"responseMimeType": "application/json", "temperature": 0.7}},
-        timeout=40)
+        json={"contents": [{"parts": [{"text": system + "\n\n" + prompt}]}],
+              "generationConfig": {"responseMimeType": "application/json",
+                                   "temperature": temperature}},
+        timeout=60)
     r.raise_for_status()
     return r.json()["candidates"][0]["content"]["parts"][0]["text"]
 
-def _check(angles, langs):
-    """Return None if usable, otherwise the exact reason it was rejected."""
-    if not isinstance(angles, list):
-        return "angles is not a list"
-    if len(angles) < 2:
-        return f"only {len(angles)} angles (need >=2)"
+
+def _providers(cfg):
+    p = [(_groq, cfg["model_primary"]), (_gemini, cfg["model_fallback"])]
+    if cfg.get("model_fallback2"):
+        p.append((_gemini, cfg["model_fallback2"]))
+    return p
+
+
+def _dump(tag, text):
+    try:
+        d = ROOT / "out" / "debug"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{tag}.txt").write_text(text or "", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _slug(s):
+    return re.sub(r"[^a-z0-9]+", "_", s.lower())[:40]
+
+
+# ---------------------------------------------------------------- validation
+
+def _check_angles(angles):
+    if not isinstance(angles, list) or len(angles) < 2:
+        return "need at least 2 angles"
     seen = set()
     for i, a in enumerate(angles):
         if not isinstance(a, dict):
             return f"angle {i} is not an object"
-        if len(a.get("shots", [])) < 3:
-            return f"angle {i} has {len(a.get('shots', []))} shots (need >=3)"
         take = str(a.get("take", "")).strip().lower()
         if not take:
             return f"angle {i} has empty take"
         if take in seen:
             return f"angle {i} duplicate take"
         seen.add(take)
-        for lang in langs:
-            blk = a.get(lang)
-            if not isinstance(blk, dict):
-                return f"angle {i} missing '{lang}' object"
-            n = len(str(blk.get("script", "")).split())
-            if n < 20:
-                return f"angle {i} '{lang}' script only {n} words (need >=20)"
-            if not blk.get("title"):
-                return f"angle {i} '{lang}' missing title"
-            if not blk.get("hashtags"):
-                return f"angle {i} '{lang}' missing hashtags"
+        if not str(a.get("hook_idea", "")).strip():
+            return f"angle {i} missing hook_idea"
+        if not isinstance(a.get("key_facts"), list) or not a["key_facts"]:
+            return f"angle {i} missing key_facts"
     return None
 
-def _dump(tag, text):
-    try:
-        d = ROOT / "out" / "debug"
-        d.mkdir(parents=True, exist_ok=True)
-        f = d / f"{tag}.txt"
-        f.write_text(text or "", encoding="utf-8")
-        return str(f)
-    except Exception:
-        return "(dump failed)"
+
+def check_script(d):
+    """Retention rules. Returns None if usable, else the exact reason."""
+    if not isinstance(d, dict):
+        return "not an object"
+    beats = d.get("beats")
+    if not isinstance(beats, list) or not (5 <= len(beats) <= 10):
+        return f"need 5-10 beats, got {len(beats) if isinstance(beats, list) else 'none'}"
+    lines = []
+    shots = set()
+    for i, b in enumerate(beats):
+        if not isinstance(b, dict) or not str(b.get("line", "")).strip():
+            return f"beat {i} has no line"
+        n = len(b["line"].split())
+        if n < 3 or n > 18:
+            return f"beat {i} has {n} words (need 3-18)"
+        shot = str(b.get("shot", "")).strip().lower()
+        if not shot:
+            return f"beat {i} has no shot"
+        if shot in shots:
+            return f"beat {i} repeats shot '{shot}'"
+        shots.add(shot)
+        lines.append(b["line"])
+    hook_words = len(lines[0].split())
+    if hook_words > 9:
+        return f"hook is {hook_words} words (need <=9)"
+    total = sum(len(l.split()) for l in lines)
+    if not (50 <= total <= 105):
+        return f"script is {total} words (need 50-105)"
+    if not any("?" in l for l in lines[-2:]):
+        return "no closing question in the last two beats"
+    if not str(d.get("title", "")).strip():
+        return "missing title"
+    if len(str(d["title"])) > 100:
+        return "title too long"
+    if not str(d.get("hook_text", "")).strip():
+        return "missing hook_text"
+    if len(str(d["hook_text"]).split()) > 6:
+        return "hook_text longer than 6 words"
+    if not d.get("hashtags"):
+        return "missing hashtags"
+    return None
+
+
+# ---------------------------------------------------------------- public API
+
+def _story_prompt(story):
+    return f"TITLE: {story['title']}\nSOURCE_URL: {story['url']}\nSOURCE:\n{story['body']}"
+
 
 def propose_angles(story, cfg):
-    langs = [c["lang"] for c in cfg["channels"].values()]
-    prompt = f"TITLE: {story['title']}\nSOURCE_URL: {story['url']}\nSOURCE:\n{story['body']}"
-    providers = [(_groq, cfg["model_primary"]), (_gemini, cfg["model_fallback"])]
-    if cfg.get("model_fallback2"):
-        providers.append((_gemini, cfg["model_fallback2"]))
+    prompt = _story_prompt(story)
     errors = []
-    slug = re.sub(r"[^a-z0-9]+", "_", story["title"].lower())[:40]
-    for fn, model in providers:
-        for attempt in range(1):
+    slug = _slug(story["title"])
+    for fn, model in _providers(cfg):
+        raw = ""
+        try:
+            print(f"  angles via {model}...", flush=True)
+            raw = fn(SYS_ANGLES, prompt, model, 0.8)
+            angles = _extract_json(raw).get("angles", [])
+            reason = _check_angles(angles)
+            if reason is None:
+                angles = angles[:3]
+                for i, a in enumerate(angles):
+                    a["angle_id"] = chr(65 + i)
+                return angles
+            _dump(f"{slug}_angles_{model.replace('/', '-')}", raw)
+            errors.append(f"{model}: {reason}")
+        except Exception as e:
+            if raw:
+                _dump(f"{slug}_angles_{model.replace('/', '-')}", raw)
+            errors.append(f"{model}: {e}")
+    raise RuntimeError("angle generation failed -> " + " | ".join(errors))
+
+
+def write_script(story, angle, lcfg, cfg):
+    """Write the picked angle natively for one channel. Retries feed the exact failure
+    back to the model so the second attempt fixes the specific rule that was broken."""
+    system = SYS_WRITE.format(lang_name=LANG_NAME.get(lcfg["lang"], lcfg["lang"]),
+                              brand=lcfg["brand"], audience=lcfg["audience"].replace("_", " "))
+    base = (_story_prompt(story) +
+            f"\n\nANGLE: {angle['take']}\nHOOK_IDEA (translate the energy, not the words): "
+            f"{angle.get('hook_idea', '')}\nKEY_FACTS:\n" +
+            "\n".join(f"- {f}" for f in angle.get("key_facts", [])))
+    errors = []
+    slug = _slug(story["title"]) + "_" + lcfg["lang"]
+    for fn, model in _providers(cfg):
+        feedback = ""
+        for attempt in range(2):
             raw = ""
             try:
-                print(f'  trying {model}...', flush=True)
-                raw = fn(prompt, model)
-                try:
-                    angles = _extract_json(raw).get("angles", [])
-                except json.JSONDecodeError:
-                    angles = _salvage_angles(raw)
-                    print(f"    salvaged {len(angles)} complete angles from truncated JSON", flush=True)
-                reason = _check(angles, langs)
+                print(f"  script [{lcfg['lang']}] via {model} try {attempt + 1}...", flush=True)
+                raw = fn(system, base + feedback, model, 0.75)
+                data = _extract_json(raw)
+                reason = check_script(data)
                 if reason is None:
-                    angles = angles[:3]
-                    for i, a in enumerate(angles):
-                        a.setdefault("angle_id", chr(65 + i))
-                    return angles
-                path = _dump(f"{slug}_{model.replace('/', '-')}_{attempt}", raw)
-                errors.append(f"{model}: {reason} [raw: {path}]")
+                    return _finish(data, lcfg)
+                feedback = (f"\n\nYOUR PREVIOUS ANSWER WAS REJECTED: {reason}. "
+                            f"Fix exactly that and return the full JSON again.")
+                _dump(f"{slug}_{model.replace('/', '-')}_{attempt}", raw)
+                errors.append(f"{model}#{attempt + 1}: {reason}")
             except Exception as e:
                 if raw:
                     _dump(f"{slug}_{model.replace('/', '-')}_{attempt}", raw)
-                errors.append(f"{model}: {e}")
-    raise RuntimeError("angle generation failed -> " + " | ".join(errors))
+                errors.append(f"{model}#{attempt + 1}: {e}")
+                break
+    raise RuntimeError("script writing failed -> " + " | ".join(errors))
+
+
+def _finish(d, lcfg):
+    """Derive the fields the rest of the pipeline reads."""
+    for b in d["beats"]:
+        b["line"] = b["line"].strip()
+        if b["line"][-1] not in ".?!।…":
+            b["line"] += "."  # terminal punctuation gives the TTS a natural pause per beat
+    lines = [b["line"] for b in d["beats"]]
+    d["script"] = " ".join(lines)
+    d["shots"] = [b["shot"].strip() for b in d["beats"]]
+    # Split on whitespace, not \w: Python's \w breaks Devanagari/Telugu words at vowel signs.
+    strip = ".,!?।…\"'“”‘’():;-"
+    words = set(w.strip(strip) for l in lines for w in l.split())
+    d["emphasis"] = [w.strip(strip) for w in d.get("emphasis", [])
+                     if isinstance(w, str) and w.strip(strip) in words][:8]
+    tags = []
+    for t in d.get("hashtags", []):
+        t = str(t).strip()
+        if t and not t.startswith("#"):
+            t = "#" + t.replace(" ", "")
+        if t and t not in tags:
+            tags.append(t)
+    if "#shorts" not in [t.lower() for t in tags]:
+        tags.insert(0, "#shorts")
+    d["hashtags"] = tags[:8]
+    d.setdefault("description", d["title"])
+    d.setdefault("ig_caption", d["title"] + "\n\n" + " ".join(d["hashtags"][:5]))
+    return d
+
 
 def pick_layout(used_recently, layouts):
     """Rotate layouts so one channel does not look templated from video to video."""

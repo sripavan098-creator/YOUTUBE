@@ -45,12 +45,14 @@ def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=
         status["publishAt"] = slot.astimezone(datetime.timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ")
 
-    first_sentence = script["script"].split(".")[0].strip()
+    desc = script.get("description") or script["script"].split(".")[0].strip()
+    tags = [h.lstrip("#") for h in script["hashtags"]][:15]
     body = {
         "snippet": {
             "title": script["title"][:100],
-            "description": f"{first_sentence}.\n\nSource: {source_url}\n\n"
+            "description": f"{desc}\n\nSource: {source_url}\n\n"
                            f"{' '.join(script['hashtags'])}",
+            "tags": tags,
             "categoryId": "28",
             "defaultLanguage": lcfg["lang"],
             "defaultAudioLanguage": lcfg["lang"],

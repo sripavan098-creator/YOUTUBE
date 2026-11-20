@@ -6,10 +6,11 @@ import edge_tts
 from mutagen.mp3 import MP3
 
 
-async def _run(text, voice, rate, mp3_path, words_path):
+async def _run(text, voice, rate, pitch, volume, mp3_path, words_path):
     words = []
     with open(mp3_path, "wb") as f:
-        communicate = edge_tts.Communicate(text, voice, rate=rate, boundary="WordBoundary")
+        communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch,
+                                           volume=volume, boundary="WordBoundary")
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 f.write(chunk["data"])
@@ -25,11 +26,13 @@ async def _run(text, voice, rate, mp3_path, words_path):
         json.dump(words, f, ensure_ascii=False)
 
 
-def synth(text, voice, rate, mp3_path, words_path, attempts=3):
+def synth(text, voice, rate, mp3_path, words_path, attempts=3, pitch="+0Hz", volume="+0%"):
+    """pitch/volume are optional per-channel tuning (config.yaml: pitch, volume).
+    A small positive pitch and a slightly faster rate reads as more energetic."""
     last = None
     for i in range(attempts):
         try:
-            asyncio.run(_run(text, voice, rate, mp3_path, words_path))
+            asyncio.run(_run(text, voice, rate, pitch, volume, mp3_path, words_path))
             return MP3(mp3_path).info.length
         except Exception as e:
             last = e

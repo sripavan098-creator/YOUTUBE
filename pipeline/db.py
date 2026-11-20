@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS stories(
     layout TEXT, angle_id TEXT, video_path TEXT,
     yt_video_id TEXT, privacy TEXT DEFAULT 'private',
     status TEXT DEFAULT 'new',
+    ig_caption TEXT,
     UNIQUE(channel, url));
 CREATE TABLE IF NOT EXISTS igq(
     id INTEGER PRIMARY KEY,
@@ -43,6 +44,19 @@ def add_story(day, channel, url, title, body):
 
 def set_status(sid, st):
     DB.execute("UPDATE stories SET status=? WHERE id=?", (st, sid))
+    DB.commit()
+
+
+# Databases created by v2 lack the caption column; add it in place.
+try:
+    DB.execute("ALTER TABLE stories ADD COLUMN ig_caption TEXT")
+    DB.commit()
+except Exception:
+    pass
+
+
+def set_caption(sid, caption):
+    DB.execute("UPDATE stories SET ig_caption=? WHERE id=?", (caption, sid))
     DB.commit()
 
 

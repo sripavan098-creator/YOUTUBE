@@ -38,6 +38,12 @@ scope. It does **not** re-upload, because a second upload of the same file dupli
 the video on your channel. If your tokens were created before v2, re-run
 `python -m pipeline.auth <channel>` to pick up the wider scope.
 
+## v3: retention upgrade
+Two-stage scripts (angles, then a validated per-channel beat script), one portrait video
+clip per spoken line, hard cuts with punch-in and whoosh, word-pop captions with keyword
+colour, a 2-second hook card, loudness-normalised voice. Details and the bug list are in
+`REVIEW.md`. Optional: put royalty-free tracks in `assets/music/` for a ducked music bed.
+
 ## What changed from v1
 
 - `channels` replaces `langs`. A channel owns its brand, voice and audience, so a story
