@@ -37,7 +37,8 @@ stories_per_channel: 4
 longform_per_week: 2
 layouts: [list, explainer, versus, timeline]
 model_primary: openai/gpt-oss-120b
-model_fallback: gemini-2.5-flash
+model_fallback: gemini-3.5-flash-lite
+model_fallback2: gemini-3.5-flash
 ig_daily: 3
 yt_step_min: 20
 yt_public_after_audit: false

@@ -18,7 +18,7 @@ CFG = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 
 # Angle generation costs one LLM call per story, so generate for a wider pool than we
 # need: skipped or failed stories must not leave a channel short of its 4 videos.
-ANGLE_POOL = 12
+ANGLE_POOL = 4
 
 
 def _ig_slots(day, count, start_hour=12, end_hour=21):
@@ -137,7 +137,7 @@ def morning():
                                       str(wj), duration, shots, layout)
                 try:
                     vid_id, slot, privacy = publish_yt.upload(
-                        channel, lcfg, CFG["yt_step_min"], i, angle[lcfg["lang"]], video,
+                        channel, lcfg, CFG["yt_step_min"], i, _clean_dict(angle[lcfg["lang"]]), video,
                         story["url"], CFG.get("yt_public_after_audit", False))
                     print(f"YT {channel} {vid_id} {privacy} {slot}")
                 except Exception as e:
