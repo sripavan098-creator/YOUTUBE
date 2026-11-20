@@ -10,23 +10,25 @@
 channels:
   hi:
     handle: "@vincodez"
-    brand: Vincodez Tech
+    brand: "Tech Muchatlu"
     color: "#FF6B00"
     accent: "#FFD166"
     voice: hi-IN-MadhurNeural
     rate: "+8%"
+    pitch: "+2Hz"
     lang: hi
     audience: india
     yt_start: "18:00"
     cta: "Guide ka link bio mein hai. Roz follow karo"
     monet_link: "https://yourinstamojo.com/vincodez-guides"
   te:
-    handle: "@sripavan9878"
-    brand: Tech Muchatlu
+    handle: "@techmuchatlu-official"
+    brand: "Tech Muchatlu"
     color: "#06B6D4"
     accent: "#FFFFFF"
     voice: te-IN-MohanNeural
     rate: "+8%"
+    pitch: "+2Hz"
     lang: te
     audience: south_india
     yt_start: "17:30"
@@ -42,3 +44,6 @@ model_fallback2: gemini-3.5-flash
 ig_daily: 3
 yt_step_min: 20
 yt_public_after_audit: false
+# v3: retention upgrades
+sfx: true            # soft whoosh on every scene cut
+music_volume: 0.12   # used only if you drop royalty-free tracks in assets/music/

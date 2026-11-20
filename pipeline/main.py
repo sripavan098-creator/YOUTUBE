@@ -1,4 +1,5 @@
 import datetime
+import json
 import pathlib
 
 import os
@@ -37,8 +38,34 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
-from pipeline import (db, publish_ig, publish_yt, refresh_ig, render, review,  # noqa: E402
-                      scripts, sources, visuals, voice, longform)
+from pipeline import (audio, db, publish_ig, publish_yt, refresh_ig, render, review,  # noqa: E402
+                      scripts, sources, timing, visuals, voice, longform)
+
+def _clean_dict(script):
+    """Bulletproof sanitizer: Nukes ALL control characters from metadata."""
+    def nuke(obj):
+        if isinstance(obj, dict):
+            return {k: nuke(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [nuke(v) for v in obj]
+        elif isinstance(obj, str):
+            # Nuke ALL control characters except newlines in descriptions
+            cleaned = ""
+            for ch in obj:
+                code = ord(ch)
+                if code < 32 and code not in (10, 13):  # keep \n and \r
+                    continue
+                if 127 <= code <= 159:
+                    continue
+                cleaned += ch
+            return cleaned.strip()
+        return obj
+    
+    out = nuke({k: v for k, v in script.items() if k != "description"})
+    if script.get("description"):
+        out["description"] = nuke(script["description"])
+    return out
+
 
 CFG = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 
@@ -153,23 +180,35 @@ def morning():
             layout = scripts.pick_layout(recent, CFG["layouts"])
             recent.append(layout)
             try:
-                shots = visuals.fetch_shots(angle["shots"], ROOT / "out" / f"shots_{sid}_{channel}")
+                # Stage 2: write the picked angle natively for THIS channel.
+                script = scripts.write_script(story, angle, lcfg, CFG)
+                (ROOT / "out").mkdir(exist_ok=True)
+                shots = visuals.fetch_shots(script["shots"], ROOT / "out" / f"shots_{sid}_{channel}")
+                raw_mp3 = ROOT / "out" / f"{sid}_{channel}.raw.mp3"
                 mp3 = ROOT / "out" / f"{sid}_{channel}.mp3"
                 wj = ROOT / "out" / f"{sid}_{channel}.json"
-                (ROOT / "out").mkdir(exist_ok=True)
-                duration = voice.synth(angle[lcfg["lang"]]["script"], lcfg["voice"],
-                                       lcfg["rate"], str(mp3), str(wj))
-                video = render.render(sid, channel, lcfg, angle[lcfg["lang"]], str(mp3),
-                                      str(wj), duration, shots, layout)
+                duration = voice.synth(script["script"], lcfg["voice"], lcfg["rate"],
+                                       str(raw_mp3), str(wj),
+                                       pitch=lcfg.get("pitch", "+0Hz"),
+                                       volume=lcfg.get("volume", "+0%"))
+                words = json.loads(wj.read_text(encoding="utf-8"))
+                lines = [b["line"] for b in script["beats"]]
+                beats = timing.beat_times(lines, words, duration)
+                duration = audio.finish(raw_mp3, mp3, [s for s, _ in beats], duration,
+                                        sfx=CFG.get("sfx", True),
+                                        music_volume=CFG.get("music_volume", 0.12))
+                video = render.render(sid, channel, lcfg, script, str(mp3), str(wj),
+                                      duration, shots, layout, beats=beats)
                 try:
                     vid_id, slot, privacy = publish_yt.upload(
-                        channel, lcfg, CFG["yt_step_min"], i, _clean_dict(angle[lcfg["lang"]]), video,
+                        channel, lcfg, CFG["yt_step_min"], i, _clean_dict(script), video,
                         story["url"], CFG.get("yt_public_after_audit", False))
                     print(f"YT {channel} {vid_id} {privacy} {slot}")
                 except Exception as e:
                     vid_id, privacy = None, "private"
                     print(f"YT upload failed {channel}: {e} (video kept in out/)")
                 db.set_produced(sid, layout, angle["angle_id"], video, vid_id, privacy)
+                db.set_caption(sid, script.get("ig_caption") or f"#shorts #{channel}")
                 db.set_status(sid, "done")
             except Exception as e:
                 db.set_status(sid, "failed")
@@ -185,7 +224,7 @@ def _queue_ig(day, channels):
         print("IG: no slots left today, nothing queued")
         return
     rows = db.DB.execute(
-        "SELECT id, channel, video_path FROM stories WHERE day=? AND status='done' "
+        "SELECT id, channel, video_path, ig_caption FROM stories WHERE day=? AND status='done' "
         "AND video_path IS NOT NULL ORDER BY id", (day,)).fetchall()
 
     # Round-robin by channel, then trim to the daily cap.
@@ -196,8 +235,8 @@ def _queue_ig(day, channels):
             if buckets[ch]:
                 interleaved.append(buckets[ch].pop(0))
 
-    for n, (sid, channel, path) in enumerate(interleaved[:len(slots)]):
-        db.queue_ig(sid, channel, path, f"#shorts #{channel}", slots[n])
+    for n, (sid, channel, path, cap) in enumerate(interleaved[:len(slots)]):
+        db.queue_ig(sid, channel, path, cap or f"#shorts #{channel}", slots[n])
     print(f"IG: queued {min(len(interleaved), len(slots))} posts")
 
 
