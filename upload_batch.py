@@ -42,6 +42,26 @@ def upload_video(youtube, filepath, title, description, tags, privacy="private")
     resp = req.execute()
     return resp['id']
 
+def meta_for(mp4):
+    """Read the metadata the pipeline wrote next to the render.
+
+    Returns None when there is no sidecar. Callers must skip rather than fall
+    back to the filename: that fallback is what published "25", "18", "17".
+    """
+    side = mp4.with_name(mp4.name.replace(".mp4", ".meta.json"))
+    if not side.exists():
+        return None
+    data = json.loads(side.read_text(encoding="utf-8"))
+    title = (data.get("title") or "").strip()
+    if not title:
+        return None
+    return {
+        "title": title[:100],
+        "description": (data.get("description") or "")[:5000],
+        "tags": [h.lstrip("#") for h in data.get("hashtags", [])][:15],
+    }
+
+
 channels = {"hi": "@vincodez", "te": "@techmuchatlu-official"}
 for lang, handle in channels.items():
     creds = load_creds(lang)
@@ -57,9 +77,12 @@ for lang, handle in channels.items():
     print(f"\n🚀 Uploading {len(files)} {lang.upper()} videos...")
     for i, fp in enumerate(files, 1):
         try:
-            title = fp.stem.replace(f"_{lang}", "").replace("_", " ").title()
-            desc = f"Tech news update from {handle}. #shorts #technews"
-            vid_id = upload_video(yt, fp, title, desc, ["tech", "shorts", "ai"])
+            meta = meta_for(fp)
+            if not meta:
+                print(f"   [skip] {fp.name}: no .meta.json beside it "
+                      f"(refusing to publish a filename-derived title)")
+                continue
+            vid_id = upload_video(yt, fp, meta["title"], meta["description"], meta["tags"])
             print(f"   ✅ [{i}/{len(files)}] {fp.name} -> ID: {vid_id}")
             time.sleep(2) 
         except Exception as e:

@@ -199,6 +199,13 @@ def morning():
                                         music_volume=CFG.get("music_volume", 0.12))
                 video = render.render(sid, channel, lcfg, script, str(mp3), str(wj),
                                       duration, shots, layout, beats=beats)
+                # Persist the generated metadata next to the mp4 so a later batch
+                # upload can reuse it instead of guessing from the filename.
+                (ROOT / "out" / f"{sid}_{channel}.meta.json").write_text(
+                    json.dumps({"title": script["title"],
+                                "description": script.get("description") or script["script"].split(".")[0],
+                                "hashtags": script["hashtags"]}, ensure_ascii=False),
+                    encoding="utf-8")
                 try:
                     vid_id, slot, privacy = publish_yt.upload(
                         channel, lcfg, CFG["yt_step_min"], i, _clean_dict(script), video,
