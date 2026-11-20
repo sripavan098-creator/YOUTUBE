@@ -11,9 +11,10 @@ import os
 import random
 import re
 import pathlib
+import time
 
 import requests
-from openai import OpenAI
+from openai import APIStatusError, OpenAI
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -89,29 +90,61 @@ def _extract_json(text):
     return json.loads(t[start:end + 1])
 
 
+_RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+def _status_of(exc):
+    """HTTP status from either a requests or an OpenAI SDK error."""
+    resp = getattr(exc, "response", None)
+    status = getattr(resp, "status_code", None)
+    if status is None:
+        status = getattr(exc, "status_code", None)
+    return status
+
+
+def _with_retry(fn, attempts=3, base=2.0):
+    """Retry transient provider failures with exponential backoff.
+
+    Gemini returns 503 "high demand" often enough that a single attempt drops a
+    channel to the next provider for the whole run.
+    """
+    retryable = (requests.HTTPError, APIStatusError)
+    for i in range(attempts):
+        try:
+            return fn()
+        except retryable as e:
+            status = _status_of(e)
+            if status not in _RETRY_STATUS or i == attempts - 1:
+                raise
+            wait = base * (2 ** i)
+            print(f"    {status} from provider, retrying in {wait:.0f}s...", flush=True)
+            time.sleep(wait)
+
+
 def _groq(system, prompt, model, temperature=0.7):
     c = OpenAI(api_key=os.environ["GROQ_API_KEY"], base_url="https://api.groq.com/openai/v1",
                timeout=60)
     kwargs = {}
     if "gpt-oss" in model:
         kwargs["extra_body"] = {"reasoning_effort": "medium"}
-    r = c.chat.completions.create(
+    return _with_retry(lambda: c.chat.completions.create(
         model=model, temperature=temperature, max_tokens=4000,
         messages=[{"role": "system", "content": system},
-                  {"role": "user", "content": prompt}], **kwargs)
-    return r.choices[0].message.content
+                  {"role": "user", "content": prompt}], **kwargs).choices[0].message.content)
 
 
 def _gemini(system, prompt, model, temperature=0.7):
-    r = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-        json={"contents": [{"parts": [{"text": system + "\n\n" + prompt}]}],
-              "generationConfig": {"responseMimeType": "application/json",
-                                   "temperature": temperature}},
-        timeout=60)
-    r.raise_for_status()
-    return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    def call():
+        r = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+            json={"contents": [{"parts": [{"text": system + "\n\n" + prompt}]}],
+                  "generationConfig": {"responseMimeType": "application/json",
+                                       "temperature": temperature}},
+            timeout=60)
+        r.raise_for_status()
+        return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    return _with_retry(call)
 
 
 def _providers(cfg):

@@ -1,44 +1,94 @@
-import os, re, pathlib, requests
+"""Repoint config.yaml at models the account can actually call.
+
+    python -m pipeline.fix_models            # print what would change
+    python -m pipeline.fix_models --write    # rewrite config.yaml
+
+Writes nothing unless --write is passed: importing this module must never touch
+config.yaml.
+"""
+
+import os
+import pathlib
+import re
+import sys
+
+import requests
 from dotenv import load_dotenv
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
+
+# Preference order. Anything not returned by the probe is skipped.
+GROQ_PREFS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+GEMINI_PREFS = ["gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.5-flash-lite"]
+
 
 def pick(ids, prefs, contains=None):
     for p in prefs:
-        if p in ids: return p
+        if p in ids:
+            return p
     if contains:
         c = [i for i in ids if contains in i]
-        if c: return sorted(c)[-1]
+        if c:
+            return sorted(c)[-1]
     return ids[0] if ids else None
 
-gm = em = None
-try:
+
+def probe_groq():
     r = requests.get("https://api.groq.com/openai/v1/models",
-        headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"}, timeout=30)
+                     headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"},
+                     timeout=30)
     r.raise_for_status()
-    g = [m["id"] for m in r.json().get("data", [])]
-    gm = pick(g, ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.6-27b"], "llama")
-    print("GROQ available:", g)
-    print("GROQ picked:", gm)
-except Exception as ex:
-    print("GROQ probe FAILED:", ex)
+    ids = [m["id"] for m in r.json().get("data", [])]
+    print("GROQ available:", ids)
+    return pick(ids, GROQ_PREFS)
 
-try:
+
+def probe_gemini():
     r = requests.get("https://generativelanguage.googleapis.com/v1beta/models",
-        headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-        params={"pageSize": 200}, timeout=30)
+                     headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+                     params={"pageSize": 200}, timeout=30)
     r.raise_for_status()
-    e = [m["name"].split("/")[-1] for m in r.json().get("models", [])
-         if "generateContent" in m.get("supportedGenerationMethods", [])]
-    clean = [m for m in e if not any(x in m for x in ("tts","image","embedding","aqa","imagen","live","audio"))]
-    em = pick(clean, ["gemini-3.8-flash","gemini-3.5-flash-lite","gemini-3.5-flash","gemini-3-flash","gemini-2.5-flash"], "flash")
-    print("GEMINI available:", e)
-    print("GEMINI picked:", em)
-except Exception as ex:
-    print("GEMINI probe FAILED:", ex)
+    ids = [m["name"].split("/")[-1] for m in r.json().get("models", [])
+           if "generateContent" in m.get("supportedGenerationMethods", [])]
+    skip = ("tts", "image", "embedding", "aqa", "imagen", "live", "audio")
+    clean = [m for m in ids if not any(x in m for x in skip)]
+    print("GEMINI available:", clean)
+    return pick(clean, GEMINI_PREFS, "flash")
 
-cfg = (ROOT / "config.yaml").read_text(encoding="utf-8")
-if gm: cfg = re.sub(r"model_primary:.*", f"model_primary: {gm}", cfg)
-if em: cfg = re.sub(r"model_fallback:.*", f"model_fallback: {em}", cfg)
-(ROOT / "config.yaml").write_text(cfg, encoding="utf-8")
-print("config.yaml updated.")
+
+def main():
+    load_dotenv(ROOT / ".env")
+    write = "--write" in sys.argv
+
+    changes = {}
+    for key, label, fn in (("model_primary", "GROQ", probe_groq),
+                           ("model_fallback", "GEMINI", probe_gemini)):
+        try:
+            picked = fn()
+            print(f"{label} picked:", picked)
+            if picked:
+                changes[key] = picked
+        except Exception as ex:
+            print(f"{label} probe FAILED: {ex}")
+
+    if not changes:
+        print("nothing resolved; config.yaml untouched")
+        return 1
+
+    for k, v in changes.items():
+        print(f"{k}: {v}")
+    if not write:
+        print("\nDry run. Re-run with --write to update config.yaml.")
+        return 0
+
+    cfg_path = ROOT / "config.yaml"
+    cfg = cfg_path.read_text(encoding="utf-8")
+    for k, v in changes.items():
+        cfg = re.sub(rf"^{k}:.*$", f"{k}: {v}", cfg, flags=re.M)
+    cfg_path.write_text(cfg, encoding="utf-8")
+    print("config.yaml updated.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
