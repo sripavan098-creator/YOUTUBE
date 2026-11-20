@@ -25,7 +25,7 @@ def _drain():
     return offset
 
 
-def review(story_angles_pairs, timeout_s=1800):
+def review(story_angles_pairs, timeout_s=5):
     """Return [(story, angle), ...] for the stories/angles the editor picked.
 
     Reply grammar: '1A,2C,3B' picks an angle per story; 'skip 4' drops story 4;

@@ -47,7 +47,7 @@ def render(sid, channel, lcfg, script, mp3, words_json, duration, shot_paths, la
 
     comp = COMPOSITIONS.get(layout, "ShortExplainer")
     subprocess.run([npx_bin(), "remotion", "render", comp, str(out),
-                    f"--props={props_file}", "--codec=h264", "--concurrency=4",
+                    f"--props={props_file}", "--codec=h264", "--concurrency=2",
                     "--overwrite", "--log=error"],
                    cwd=str(REMOTION), check=True)
     if not out.exists() or out.stat().st_size == 0:
