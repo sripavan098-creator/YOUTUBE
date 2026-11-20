@@ -10,7 +10,7 @@
 channels:
   hi:
     handle: "@vincodez"
-    brand: Vincodez Tech
+    brand: "Tech Muchatlu"
     color: "#FF6B00"
     accent: "#FFD166"
     voice: hi-IN-MadhurNeural
@@ -22,8 +22,8 @@ channels:
     cta: "Guide ka link bio mein hai. Roz follow karo"
     monet_link: "https://yourinstamojo.com/vincodez-guides"
   te:
-    handle: "@sripavan9878"
-    brand: Tech Muchatlu
+    handle: "@techmuchatlu-official"
+    brand: "Tech Muchatlu"
     color: "#06B6D4"
     accent: "#FFFFFF"
     voice: te-IN-MohanNeural
