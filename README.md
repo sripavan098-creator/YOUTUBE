@@ -44,6 +44,21 @@ clip per spoken line, hard cuts with punch-in and whoosh, word-pop captions with
 colour, a 2-second hook card, loudness-normalised voice. Details and the bug list are in
 `REVIEW.md`. Optional: put royalty-free tracks in `assets/music/` for a ducked music bed.
 
+## v3.1: trends, pure-language scripts, Unsplash-only footage
+- **Google Trends** (`pipeline/trends.py`): stories that match what India (and AP/Telangana for
+  the Telugu channel) is searching right now get a score boost, and trending tech searches can
+  become stories themselves. It needs no API key; if Google is unreachable the pipeline runs
+  without the boost. Turn off with `trends: false` in `config.yaml`.
+- **Pure Telugu / Hindi**: the writer prompt asks for everyday spoken language in the native
+  script, and the validator rejects any line containing Latin letters.
+- **3-second hook**: the first spoken line must be 8 words or fewer, and after TTS its real
+  length is measured; if it runs past 3.4 s the script is rewritten once with that number.
+- **Unsplash only**: one portrait photo per spoken line, 9:16 crop. Demo apps are limited to
+  50 requests/hour; searches are cached in `out/unsplash_cache.json` and the fetcher waits for
+  the next hour when the quota runs out (`UNSPLASH_WAIT=0` to skip waiting). Applying for
+  Production access in the Unsplash dashboard lifts the limit.
+- `upload_batch.py` writes `<story>_<channel>.uploaded.json` and skips renders that have one.
+
 ## What changed from v1
 
 - `channels` replaces `langs`. A channel owns its brand, voice and audience, so a story
@@ -61,20 +76,23 @@ colour, a 2-second hook card, loudness-normalised voice. Details and the bug lis
 - **Studio has no CSV import.** Google's upload page says "up to 15 videos at a time"
   with per-file editing; there is no bulk metadata CSV. So the audit-wait workflow is:
   run `--now`, then drag `out/*.mp4` into Studio (15 at a time). Files are already named
-  `<story>_<channel>.mp4`, and titles are in the DB.
+  `<story>_<channel>.mp4`, and the generated metadata is beside each file as
+  `<story>_<channel>.meta.json`.
 - **YouTube quota** is 10,000 units/day, but `videos.insert` has its own bucket of about
   100 uploads/day. 8 Shorts + 2 long-form/day is far inside it.
-- **Untested against live services**: YouTube upload, Instagram publish, Pexels fetch and
-  the Groq/Gemini calls. Everything else is exercised in the test suite below.
+- **Untested against live services**: Instagram publish and the Groq/Gemini calls are
+  not exercised by anything in this repo. YouTube upload and the Unsplash fetch have
+  run in production.
 
-## Tests
+## Verification
 
-The pipeline is verified by running it, not by mocking the interesting parts:
+There is no committed test suite. Each run is verified by doing the real thing:
 
-- real edge-tts in Hindi and Telugu, asserting word-level boundaries exist
-- real Remotion renders of all four layouts to valid MP4
-- full `morning()` run producing 8 MP4s with stubbed network only
-- assignment, angle-selection, layout rotation, IG cap, replay and long-form guards
+- `python -m pipeline.doctor` - preflight: config, env keys, OAuth tokens, ffmpeg,
+  node/esbuild, Telegram reachability
+- `python -m pipeline.probe` - real RSS fetch and a real angle-generation call
+- one real render end to end: edge-tts word timings, ffmpeg audio finish, Remotion
+  render, YouTube upload
 
 ## Layout
 
@@ -86,7 +104,7 @@ The pipeline is verified by running it, not by mocking the interesting parts:
 | `pipeline/scripts.py` | 3 angles per story, Groq then Gemini, strict validation |
 | `pipeline/review.py` | Telegram angle picker (`1A,2C`, `skip 4`, `auto`) |
 | `pipeline/voice.py` | edge-tts with word timings |
-| `pipeline/visuals.py` | Pexels portrait b-roll |
+| `pipeline/visuals.py` | Unsplash portrait images |
 | `pipeline/render.py` | Remotion render, layout to composition mapping |
 | `pipeline/publish_yt.py` | Upload, slot scheduling, privacy gate, promote |
 | `pipeline/publish_ig.py` | Reels publish via Graph API |

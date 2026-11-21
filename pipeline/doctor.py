@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
-REQUIRED_ENV = ["GROQ_API_KEY", "GEMINI_API_KEY", "PEXELS_API_KEY",
+REQUIRED_ENV = ["GROQ_API_KEY", "GEMINI_API_KEY", "UNSPLASH_ACCESS_KEY",
                 "TG_BOT_TOKEN", "TG_CHAT_ID", "GH_TOKEN", "GH_REPO",
                 "IG_APP_ID", "IG_APP_SECRET", "IG_REDIRECT"]
 
@@ -69,6 +69,8 @@ def main():
 
     results.append(_check("node/npx on PATH",
                           shutil.which("npx") is not None or shutil.which("npx.cmd") is not None))
+    results.append(_check("ffmpeg on PATH", shutil.which("ffmpeg") is not None,
+                          "audio.finish() and render() both shell out to ffmpeg"))
     results.append(_check("remotion node_modules",
                           (ROOT / "remotion" / "node_modules").exists(),
                           "cd remotion && npm install"))

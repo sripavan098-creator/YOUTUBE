@@ -11,9 +11,10 @@ import os
 import random
 import re
 import pathlib
+import time
 
 import requests
-from openai import OpenAI
+from openai import APIStatusError, OpenAI
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -32,50 +33,84 @@ Return STRICT JSON:
    "key_facts": ["3-5 short facts that appear in the SOURCE. No outside facts."]},
   {"angle_id": "B", ...}, {"angle_id": "C", ...}
 ]}
+If a TRENDING_SEARCH line is given, people in India are searching that term right now:
+make at least one angle that uses it naturally. Never force it when it does not fit.
 Facts must be traceable to the SOURCE text. If the source is thin, use fewer facts.
 Return ONLY raw JSON. No markdown, no code fences."""
 
 # ---------------------------------------------------------------- stage 2: script
 
-SYS_WRITE = """You write 30-40 second vertical-video scripts that win on RETENTION.
-You are writing in {lang_name} for the channel "{brand}" (audience: {audience}).
+SYS_WRITE = """You write 30-40 second vertical-video scripts that win on RETENTION, for
+people who will watch in {lang_name} and nothing else.
+Channel: "{brand}". Audience: {audience}.
+
+LANGUAGE (the most important rule):
+{style}
+Every line must be written ONLY in the native script. No Latin letters at all. Product and
+company names are written the way people say them, in native script.
 
 Return STRICT JSON:
 {{
- "title": "<=60 chars, {lang_name}, a curiosity gap or a concrete stake, never a summary",
- "hook_text": "2-5 words shown huge on screen in the first 2 seconds, {lang_name}",
- "beats": [{{"line": "one spoken sentence in {lang_name}", "shot": "2-4 English words for stock footage"}}],
+ "title": "<=60 chars, native script, a curiosity gap or a concrete stake, never a summary.
+           If a TRENDING_SEARCH is given and fits, include it the way people type it.",
+ "hook_text": "2-5 native words shown huge on screen in the first 2 seconds",
+ "beats": [{{"line": "one spoken sentence", "shot": "2-3 English words for a photo search"}}],
  "emphasis": ["up to 8 single words copied exactly from the lines that deserve color"],
- "description": "2 lines. Line 1 has the main keyword and the hook. Line 2 asks a question.",
+ "description": "2 lines in native script. Line 1 carries the main keyword and the hook. Line 2 asks a question.",
  "ig_caption": "hook line, blank line, 2 short lines, a question, blank line, 5 hashtags",
- "hashtags": ["#shorts", "...5-7 tags, mix of broad and specific"]
+ "hashtags": ["#shorts", "...5-7 tags, mix of broad and specific, native or English as people search"]
 }}
 
-STRUCTURE (this order is the whole point):
-1. beats[0] is the HOOK: 8 words or fewer. Open a loop the viewer must see closed. Use a
-   shock, a number, a threat to their money/job/phone, or a direct "you". Never greet.
-   Never start with "Today", "Hello", "Namaste", "Welcome" or the channel name.
-2. beats[1-2]: the concrete fact, with the one number or name that makes it real.
-3. A RE-HOOK around the middle: a turn like "But here is the catch" (in {lang_name}) so
-   attention resets exactly where people swipe away.
-4. beats[-2]: the payoff that closes the loop opened in beat 0.
-5. beats[-1]: a question that invites a comment AND echoes the first beat so the video
+THE 3-SECOND RULE. People decide to swipe in under 3 seconds, so beats[0] is everything:
+- 8 words or fewer, spoken in about 2.5 seconds. Starts with the stake, not the topic.
+- It must do ONE of: threaten the viewer's money/job/phone/account; promise a secret they
+  are missing; state a shocking number; ask a question they cannot answer yet.
+- Never greet. Never say the channel name. Never start with "today" or "in this video".
+- Speak TO the viewer ("you/your" in their language), not about a company.
+
+STRUCTURE after the hook:
+1. beats[1-2]: the concrete fact, with the one number or name that makes it real.
+2. A RE-HOOK around the middle (a turn like "but here is the catch") so attention resets
+   exactly where people swipe away.
+3. beats[-2]: the payoff that closes the loop the hook opened.
+4. beats[-1]: a question that invites a comment AND echoes the first beat so the video
    loops cleanly when it replays.
 
 STYLE:
-- Spoken, like a friend at a chai stall. Tech nouns in {lang_name} script (e.g. AI, Google).
 - 6 to 9 beats, each 5 to 14 words. Total 60-95 words. Short punchy sentences.
-- Every beat must give NEW information or a new emotion. No filler, no recap.
+- Every beat gives NEW information or a new emotion. No filler, no recap.
 - Use ONLY facts from KEY_FACTS and SOURCE. Never invent numbers, quotes or dates.
-- 'shot' must be something a stock library actually has and that matches the line
-  (concrete: "phone screen", "stock market board", "server room"), never abstract nouns.
-- Do not repeat the same shot query twice.
+- 'shot' is a PHOTO search for Unsplash: a concrete, photogenic subject that matches the
+  line, such as "smartphone in hand", "indian street night", "server room", "stock market
+  screen", "student laptop". No abstract words, no brand names, no people's names. Add
+  "india" when a local feel helps. Never repeat a shot query.
 
 Return ONLY raw JSON. No markdown, no code fences."""
 
-LANG_NAME = {"hi": "Hindi (Devanagari, casual Hinglish register)",
-             "te": "Telugu (Telugu script, casual spoken register)",
-             "en": "English"}
+LANG_NAME = {"hi": "Hindi (Devanagari)", "te": "Telugu (Telugu script)", "en": "English"}
+
+LANG_STYLE = {
+    "te": """Write PURE, everyday spoken Telugu (వాడుక భాష) as a Telugu person from Andhra or
+Telangana would say it to a friend. Think in Telugu; never translate from English.
+Prefer native Telugu words over English ones whenever a natural one exists
+(ఉచితంగా, డబ్బు, ఉద్యోగం, ఖాతా, జాగ్రత్త, తెలుసా). Use natural spoken endings and rhythm
+(-తోంది, -తున్నారు, "ఏంటో తెలుసా?", "చూడండి", "వినండి"). Short sentences. No Hindi or English
+words mixed in. Good hook shapes (do not copy, match the energy):
+  "మీ ఫోన్‌లో ఈ ఒక్క సెట్టింగ్ మీ డబ్బు తినేస్తోంది!"
+  "గూగుల్ ఇది ఉచితంగా ఇస్తోంది, కానీ ఎందుకో తెలుసా?"
+  "ఈ ఒక్క తప్పుతో మీ ఖాతా ఖాళీ అవుతుంది!"
+""",
+    "hi": """Write PURE, everyday spoken Hindi (रोज़ की बोलचाल की हिंदी) as you would say it to a
+friend. Think in Hindi; never translate from English. This is NOT Hinglish: use Hindi
+words wherever a natural one exists (मुफ़्त, पैसा, नौकरी, खाता, ख़बर, सावधान, जानते हैं).
+Short sentences, natural spoken rhythm. No English words mixed in. Good hook shapes (do
+not copy, match the energy):
+  "आपके फ़ोन की ये एक सेटिंग आपका पैसा खा रही है!"
+  "गूगल ये मुफ़्त दे रहा है, पर क्यों?"
+  "सावधान! ये एक गलती और आपका खाता खाली!"
+""",
+    "en": "Write plain, punchy spoken English.",
+}
 
 
 def _extract_json(text):
@@ -89,29 +124,61 @@ def _extract_json(text):
     return json.loads(t[start:end + 1])
 
 
+_RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+def _status_of(exc):
+    """HTTP status from either a requests or an OpenAI SDK error."""
+    resp = getattr(exc, "response", None)
+    status = getattr(resp, "status_code", None)
+    if status is None:
+        status = getattr(exc, "status_code", None)
+    return status
+
+
+def _with_retry(fn, attempts=3, base=2.0):
+    """Retry transient provider failures with exponential backoff.
+
+    Gemini returns 503 "high demand" often enough that a single attempt drops a
+    channel to the next provider for the whole run.
+    """
+    retryable = (requests.HTTPError, APIStatusError)
+    for i in range(attempts):
+        try:
+            return fn()
+        except retryable as e:
+            status = _status_of(e)
+            if status not in _RETRY_STATUS or i == attempts - 1:
+                raise
+            wait = base * (2 ** i)
+            print(f"    {status} from provider, retrying in {wait:.0f}s...", flush=True)
+            time.sleep(wait)
+
+
 def _groq(system, prompt, model, temperature=0.7):
     c = OpenAI(api_key=os.environ["GROQ_API_KEY"], base_url="https://api.groq.com/openai/v1",
                timeout=60)
     kwargs = {}
     if "gpt-oss" in model:
         kwargs["extra_body"] = {"reasoning_effort": "medium"}
-    r = c.chat.completions.create(
+    return _with_retry(lambda: c.chat.completions.create(
         model=model, temperature=temperature, max_tokens=4000,
         messages=[{"role": "system", "content": system},
-                  {"role": "user", "content": prompt}], **kwargs)
-    return r.choices[0].message.content
+                  {"role": "user", "content": prompt}], **kwargs).choices[0].message.content)
 
 
 def _gemini(system, prompt, model, temperature=0.7):
-    r = requests.post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-        headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-        json={"contents": [{"parts": [{"text": system + "\n\n" + prompt}]}],
-              "generationConfig": {"responseMimeType": "application/json",
-                                   "temperature": temperature}},
-        timeout=60)
-    r.raise_for_status()
-    return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    def call():
+        r = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+            headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+            json={"contents": [{"parts": [{"text": system + "\n\n" + prompt}]}],
+                  "generationConfig": {"responseMimeType": "application/json",
+                                       "temperature": temperature}},
+            timeout=60)
+        r.raise_for_status()
+        return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    return _with_retry(call)
 
 
 def _providers(cfg):
@@ -156,7 +223,7 @@ def _check_angles(angles):
     return None
 
 
-def check_script(d):
+def check_script(d, lang=None):
     """Retention rules. Returns None if usable, else the exact reason."""
     if not isinstance(d, dict):
         return "not an object"
@@ -179,8 +246,15 @@ def check_script(d):
         shots.add(shot)
         lines.append(b["line"])
     hook_words = len(lines[0].split())
-    if hook_words > 9:
-        return f"hook is {hook_words} words (need <=9)"
+    if hook_words > 8:
+        return f"hook is {hook_words} words (need <=8, it must be spoken in about 2.5 s)"
+    if lang in ("hi", "te"):
+        for i, l in enumerate(lines):
+            if re.search(r"[A-Za-z]", l):
+                return (f"beat {i} contains Latin letters; write it entirely in "
+                        f"{'Devanagari' if lang == 'hi' else 'Telugu'} script")
+        if re.search(r"[A-Za-z]", str(d.get("hook_text", ""))):
+            return "hook_text contains Latin letters"
     total = sum(len(l.split()) for l in lines)
     if not (50 <= total <= 105):
         return f"script is {total} words (need 50-105)"
@@ -207,6 +281,8 @@ def _story_prompt(story):
 
 def propose_angles(story, cfg):
     prompt = _story_prompt(story)
+    if story.get("trend_hits"):
+        prompt += "\nTRENDING_SEARCH: " + ", ".join(story["trend_hits"][:3])
     errors = []
     slug = _slug(story["title"])
     for fn, model in _providers(cfg):
@@ -230,15 +306,22 @@ def propose_angles(story, cfg):
     raise RuntimeError("angle generation failed -> " + " | ".join(errors))
 
 
-def write_script(story, angle, lcfg, cfg):
+def write_script(story, angle, lcfg, cfg, note=""):
     """Write the picked angle natively for one channel. Retries feed the exact failure
     back to the model so the second attempt fixes the specific rule that was broken."""
     system = SYS_WRITE.format(lang_name=LANG_NAME.get(lcfg["lang"], lcfg["lang"]),
+                              style=LANG_STYLE.get(lcfg["lang"], ""),
                               brand=lcfg["brand"], audience=lcfg["audience"].replace("_", " "))
     base = (_story_prompt(story) +
             f"\n\nANGLE: {angle['take']}\nHOOK_IDEA (translate the energy, not the words): "
             f"{angle.get('hook_idea', '')}\nKEY_FACTS:\n" +
             "\n".join(f"- {f}" for f in angle.get("key_facts", [])))
+    if story.get("trend_hits"):
+        base += ("\nTRENDING_SEARCH (people in India are searching this right now; use it in the "
+                 "title and early in the script only if it truly fits): "
+                 + ", ".join(story["trend_hits"][:3]))
+    if note:
+        base += "\n\nEDITOR NOTE: " + note
     errors = []
     slug = _slug(story["title"]) + "_" + lcfg["lang"]
     for fn, model in _providers(cfg):
@@ -249,7 +332,7 @@ def write_script(story, angle, lcfg, cfg):
                 print(f"  script [{lcfg['lang']}] via {model} try {attempt + 1}...", flush=True)
                 raw = fn(system, base + feedback, model, 0.75)
                 data = _extract_json(raw)
-                reason = check_script(data)
+                reason = check_script(data, lcfg.get("lang"))
                 if reason is None:
                     return _finish(data, lcfg)
                 feedback = (f"\n\nYOUR PREVIOUS ANSWER WAS REJECTED: {reason}. "
