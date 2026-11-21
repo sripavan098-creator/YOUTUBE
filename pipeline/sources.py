@@ -3,6 +3,8 @@ import re
 import feedparser
 import trafilatura
 
+from pipeline import trends as gtrends
+
 FEEDS = [
     "https://techcrunch.com/feed/",
     "https://www.theverge.com/rss/index.xml",
@@ -37,7 +39,8 @@ def _fetch_body(url, fallback):
         return fallback
 
 
-def top_stories(n=20):
+def top_stories(n=20, trend_items=None):
+    trend_items = trend_items or []
     items, seen_urls = [], set()
     for feed in FEEDS:
         try:
@@ -53,14 +56,35 @@ def top_stories(n=20):
             title = e.get("title", "")
             summary = re.sub("<[^>]+>", "", e.get("summary", ""))[:500]
             blob = (title + " " + summary).lower()
+            hits = gtrends.matches(blob, trend_items)
+            south_trend = any(g in ("IN-AP", "IN-TG") for h in hits for g in h["geos"])
             items.append({
                 "url": url,
                 "title": title,
                 "summary": summary,
-                "score": sum(v for k, v in W.items() if k in blob),
+                "score": sum(v for k, v in W.items() if k in blob) + gtrends.boost(hits),
                 "fits_india": any(k in blob for k in INDIA_KW),
-                "fits_south": any(k in blob for k in SOUTH_KW),
+                "fits_south": any(k in blob for k in SOUTH_KW) or south_trend,
+                "trend_hits": [h["term"] for h in hits],
             })
+    # Stories born from Google Trends itself: a trending search whose news is tech-related
+    # is a topic people are asking about right now, even if no RSS feed above covered it.
+    for it in trend_items[:25]:
+        blob = (it["term"] + " " + " ".join(n["title"] for n in it["news"])).lower()
+        tech = sum(v for k, v in W.items() if k in blob)
+        if tech < 3 or not it["news"]:
+            continue
+        n0 = it["news"][0]
+        if n0["url"] in seen_urls:
+            continue
+        seen_urls.add(n0["url"])
+        items.append({
+            "url": n0["url"], "title": n0["title"] or it["term"], "summary": n0["title"],
+            "score": tech + gtrends.boost([it]) + 2,
+            "fits_india": True,
+            "fits_south": any(g in ("IN-AP", "IN-TG") for g in it["geos"]),
+            "trend_hits": [it["term"]],
+        })
     items.sort(key=lambda x: -x["score"])
     out = []
     for it in items[:n]:

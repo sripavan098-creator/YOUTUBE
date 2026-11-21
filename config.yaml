@@ -17,9 +17,10 @@ channels:
     rate: "+8%"
     pitch: "+2Hz"
     lang: hi
+    trends_geo: ["IN"]
     audience: india
     yt_start: "18:00"
-    cta: "Guide ka link bio mein hai. Roz follow karo"
+    cta: "गाइड का लिंक बायो में है। रोज़ फ़ॉलो करें"
     monet_link: "https://yourinstamojo.com/vincodez-guides"
   te:
     handle: "@techmuchatlu-official"
@@ -30,9 +31,10 @@ channels:
     rate: "+8%"
     pitch: "+2Hz"
     lang: te
+    trends_geo: ["IN-AP", "IN-TG", "IN"]
     audience: south_india
     yt_start: "17:30"
-    cta: "Guide link bio lo undi. Follow avvandi"
+    cta: "గైడ్ లింక్ బయోలో ఉంది. రోజూ ఫాలో అవ్వండి"
     monet_link: "https://yourinstamojo.com/techmuchatlu-guides"
 
 stories_per_channel: 4
@@ -47,3 +49,4 @@ yt_public_after_audit: false
 # v3: retention upgrades
 sfx: true            # soft whoosh on every scene cut
 music_volume: 0.12   # used only if you drop royalty-free tracks in assets/music/
+trends: true       # boost stories that match what India is searching on Google right now

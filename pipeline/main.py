@@ -39,7 +39,7 @@ sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
 from pipeline import (audio, db, publish_ig, publish_yt, refresh_ig, render, review,  # noqa: E402
-                      scripts, sources, timing, visuals, voice, longform)
+                      scripts, sources, timing, trends, visuals, voice, longform)
 
 def _clean_dict(script):
     """Bulletproof sanitizer: Nukes ALL control characters from metadata."""
@@ -72,6 +72,7 @@ CFG = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 # Angle generation costs one LLM call per story, so generate for a wider pool than we
 # need: skipped or failed stories must not leave a channel short of its 4 videos.
 ANGLE_POOL = 4
+HOOK_MAX_SEC = 3.4  # spoken hook must end by here (3 s window + TTS lead-in)
 
 
 def _ig_slots(day, count, start_hour=12, end_hour=21):
@@ -138,7 +139,8 @@ def morning():
     channels = CFG["channels"]
     langs = [c["lang"] for c in channels.values()]
 
-    fresh = [s for s in sources.top_stories(20)
+    trend_items = trends.fetch_all(CFG) if CFG.get("trends", True) else []
+    fresh = [s for s in sources.top_stories(20, trend_items=trend_items)
              if not any(db.seen(ch, s["url"]) for ch in channels)]
     if not fresh:
         print("no new stories")
@@ -180,20 +182,34 @@ def morning():
             layout = scripts.pick_layout(recent, CFG["layouts"])
             recent.append(layout)
             try:
-                # Stage 2: write the picked angle natively for THIS channel.
-                script = scripts.write_script(story, angle, lcfg, CFG)
+                # Stage 2: write the picked angle natively for THIS channel, then voice it.
+                # The spoken hook must land inside ~3 s, the window in which people decide
+                # to swipe. TTS length can only be known after synthesis, so if the hook runs
+                # long the script is rewritten once with that exact measurement.
                 (ROOT / "out").mkdir(exist_ok=True)
-                shots = visuals.fetch_shots(script["shots"], ROOT / "out" / f"shots_{sid}_{channel}")
                 raw_mp3 = ROOT / "out" / f"{sid}_{channel}.raw.mp3"
                 mp3 = ROOT / "out" / f"{sid}_{channel}.mp3"
                 wj = ROOT / "out" / f"{sid}_{channel}.json"
-                duration = voice.synth(script["script"], lcfg["voice"], lcfg["rate"],
-                                       str(raw_mp3), str(wj),
-                                       pitch=lcfg.get("pitch", "+0Hz"),
-                                       volume=lcfg.get("volume", "+0%"))
-                words = json.loads(wj.read_text(encoding="utf-8"))
-                lines = [b["line"] for b in script["beats"]]
-                beats = timing.beat_times(lines, words, duration)
+                note = ""
+                for attempt in range(2):
+                    script = scripts.write_script(story, angle, lcfg, CFG, note=note)
+                    duration = voice.synth(script["script"], lcfg["voice"], lcfg["rate"],
+                                           str(raw_mp3), str(wj),
+                                           pitch=lcfg.get("pitch", "+0Hz"),
+                                           volume=lcfg.get("volume", "+0%"))
+                    words = json.loads(wj.read_text(encoding="utf-8"))
+                    lines = [b["line"] for b in script["beats"]]
+                    beats = timing.beat_times(lines, words, duration)
+                    hook_s = beats[0][1]
+                    if hook_s <= HOOK_MAX_SEC or attempt == 1:
+                        if hook_s > HOOK_MAX_SEC:
+                            print(f"  hook still {hook_s:.1f}s after rewrite; keeping it")
+                        break
+                    note = (f"Your first line took {hook_s:.1f} seconds to speak. It must be "
+                            f"under 3. Rewrite the whole script with a hook of at most 6 short "
+                            f"words that states the stake immediately.")
+                    print(f"  hook {hook_s:.1f}s too slow, rewriting once")
+                shots = visuals.fetch_shots(script["shots"], ROOT / "out" / f"shots_{sid}_{channel}")
                 duration = audio.finish(raw_mp3, mp3, [s for s, _ in beats], duration,
                                         sfx=CFG.get("sfx", True),
                                         music_volume=CFG.get("music_volume", 0.12))
@@ -211,6 +227,9 @@ def morning():
                         channel, lcfg, CFG["yt_step_min"], i, _clean_dict(script), video,
                         story["url"], CFG.get("yt_public_after_audit", False))
                     print(f"YT {channel} {vid_id} {privacy} {slot}")
+                    # upload_batch.py checks this marker so it never uploads the same render twice
+                    (ROOT / "out" / f"{sid}_{channel}.uploaded.json").write_text(
+                        json.dumps({"id": vid_id, "privacy": privacy}), encoding="utf-8")
                 except Exception as e:
                     vid_id, privacy = None, "private"
                     print(f"YT upload failed {channel}: {e} (video kept in out/)")

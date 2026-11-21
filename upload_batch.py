@@ -77,12 +77,18 @@ for lang, handle in channels.items():
     print(f"\n🚀 Uploading {len(files)} {lang.upper()} videos...")
     for i, fp in enumerate(files, 1):
         try:
+            marker = fp.with_name(fp.name.replace(".mp4", ".uploaded.json"))
+            if marker.exists():
+                print(f"   [skip] {fp.name}: already uploaded "
+                      f"({json.loads(marker.read_text()).get('id')})")
+                continue
             meta = meta_for(fp)
             if not meta:
                 print(f"   [skip] {fp.name}: no .meta.json beside it "
                       f"(refusing to publish a filename-derived title)")
                 continue
             vid_id = upload_video(yt, fp, meta["title"], meta["description"], meta["tags"])
+            marker.write_text(json.dumps({"id": vid_id}), encoding="utf-8")
             print(f"   ✅ [{i}/{len(files)}] {fp.name} -> ID: {vid_id}")
             time.sleep(2) 
         except Exception as e:
