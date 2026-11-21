@@ -44,6 +44,21 @@ clip per spoken line, hard cuts with punch-in and whoosh, word-pop captions with
 colour, a 2-second hook card, loudness-normalised voice. Details and the bug list are in
 `REVIEW.md`. Optional: put royalty-free tracks in `assets/music/` for a ducked music bed.
 
+## v3.1: trends, pure-language scripts, Unsplash-only footage
+- **Google Trends** (`pipeline/trends.py`): stories that match what India (and AP/Telangana for
+  the Telugu channel) is searching right now get a score boost, and trending tech searches can
+  become stories themselves. It needs no API key; if Google is unreachable the pipeline runs
+  without the boost. Turn off with `trends: false` in `config.yaml`.
+- **Pure Telugu / Hindi**: the writer prompt asks for everyday spoken language in the native
+  script, and the validator rejects any line containing Latin letters.
+- **3-second hook**: the first spoken line must be 8 words or fewer, and after TTS its real
+  length is measured; if it runs past 3.4 s the script is rewritten once with that number.
+- **Unsplash only**: one portrait photo per spoken line, 9:16 crop. Demo apps are limited to
+  50 requests/hour; searches are cached in `out/unsplash_cache.json` and the fetcher waits for
+  the next hour when the quota runs out (`UNSPLASH_WAIT=0` to skip waiting). Applying for
+  Production access in the Unsplash dashboard lifts the limit.
+- `upload_batch.py` writes `<story>_<channel>.uploaded.json` and skips renders that have one.
+
 ## What changed from v1
 
 - `channels` replaces `langs`. A channel owns its brand, voice and audience, so a story
