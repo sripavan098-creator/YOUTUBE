@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import time
 
@@ -84,9 +85,72 @@ def prosody(base_rate, base_pitch, base_volume, mood):
     return f"{r:+d}%", f"{p:+d}Hz", f"{v:+d}%"
 
 
-def _synth_one(text, voice, rate, pitch, volume, mp3_path, words_path):
-    """Seam for tests; the real network call."""
+def _synth_one(text, voice, rate, pitch, volume, mp3_path, words_path,
+               lang=None, sarvam_voice_id=None):
+    """Synthesise one beat.
+
+    Priority:
+      1. Sarvam AI — if SARVAM_API_KEY is set. Natural Indian-language prosody,
+         voice cloning support, correct Telugu/Hindi accent. Pace is derived from
+         Edge TTS rate so the mood system still controls delivery speed.
+      2. Edge TTS — fallback when Sarvam is unavailable.
+
+    When Sarvam is used, word-boundary JSON is estimated from the audio duration
+    (Sarvam doesn't return word timings). We generate one boundary spanning the
+    full segment — the caption system will split on spaces instead.
+    """
+    # Try Sarvam first
+    try:
+        from pipeline.sarvam_voice import synth_sarvam, available as sarvam_ok
+    except ImportError:
+        sarvam_ok = lambda: False
+
+    if sarvam_ok() and lang:
+        # Convert Edge-TTS rate (+14% → 1.14 pace) to Sarvam pace (0.5-2.0)
+        r_num = int(re.search(r"-?\d+", rate).group()) if re.search(r"-?\d+", rate) else 0
+        pace = round(max(0.6, min(1.8, 1.0 + r_num / 100)), 2)
+        wav_path = str(pathlib.Path(mp3_path).with_suffix(".wav"))
+        try:
+            dur = synth_sarvam(text, lang, wav_path,
+                               voice_id=sarvam_voice_id, pace=pace)
+            # Convert WAV → MP3 for consistency downstream
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", wav_path,
+                            "-c:a", "libmp3lame", "-q:a", "2", mp3_path], check=True)
+            # Estimate word boundaries (Sarvam gives no timings)
+            words = _estimate_word_times(text, dur)
+            pathlib.Path(words_path).write_text(
+                json.dumps(words, ensure_ascii=False), encoding="utf-8"
+            )
+            return dur
+        except Exception as e:
+            print(f"  [sarvam] failed, falling back to Edge TTS: {e}")
+
+    # Edge TTS fallback
     return synth(text, voice, rate, mp3_path, words_path, pitch=pitch, volume=volume)
+
+
+def _estimate_word_times(text: str, duration: float) -> list:
+    """Create approximate word-boundary entries from text + total duration.
+    Distributes time proportionally by character count so captions are roughly right.
+    Not as accurate as Edge TTS WordBoundary, but good enough for cut timing."""
+    import re as _re
+    # Split on whitespace, skip empty
+    tokens = [w for w in _re.split(r"\s+", text.strip()) if w]
+    if not tokens:
+        return [{"text": text, "start": 0.0, "end": duration}]
+    # Weight by character length (longer words take longer to say)
+    weights = [max(1, len(t)) for t in tokens]
+    total_w = sum(weights)
+    # Leave a small silent lead-in and trail
+    usable = duration * 0.90
+    start_offset = duration * 0.05
+    words = []
+    t = start_offset
+    for tok, w in zip(tokens, weights):
+        seg = usable * (w / total_w)
+        words.append({"text": tok, "start": round(t, 3), "end": round(t + seg, 3)})
+        t += seg
+    return words
 
 
 def _wav_len(path):
@@ -100,20 +164,39 @@ def _ff(args):
 
 def synth_beats(beats, lcfg, workdir, mp3_out):
     """Voice every beat with its own mood. Returns (words, beat_times, duration):
-    words are global (seconds from 0), beat_times is [(start, end)] per beat."""
+    words are global (seconds from 0), beat_times is [(start, end)] per beat.
+
+    Uses Sarvam AI when SARVAM_API_KEY is set (best for Indian languages).
+    Falls back to Edge TTS automatically.
+    If SARVAM_VOICE_SAMPLE is set in .env, registers the cloned voice once and
+    reuses it for every beat.
+    """
     import json as _json
     workdir = pathlib.Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     SR = 48000
     parts, words_all, starts = [], [], []
     t = 0.0
+
+    # Resolve cloned voice once per channel run
+    sarvam_voice_id = None
+    lang = lcfg.get("lang")
+    sample = os.environ.get("SARVAM_VOICE_SAMPLE", "").strip()
+    if sample and pathlib.Path(sample).exists() and lang:
+        try:
+            from pipeline.sarvam_voice import register_voice
+            sarvam_voice_id = register_voice(sample, lang)
+        except Exception as e:
+            print(f"  [sarvam] voice clone registration failed: {e}")
+
     for i, b in enumerate(beats):
         role = b.get("role") or ("hook" if i == 0 else "fact")
         mood = b.get("mood") or DEFAULT_MOOD.get(role, "curious")
         rate, pitch, vol = prosody(lcfg.get("rate", "+0%"), lcfg.get("pitch", "+0Hz"),
                                    lcfg.get("volume", "+0%"), mood)
         raw, wj = workdir / f"b{i}.mp3", workdir / f"b{i}.json"
-        _synth_one(b["line"], lcfg["voice"], rate, pitch, vol, str(raw), str(wj))
+        _synth_one(b["line"], lcfg["voice"], rate, pitch, vol, str(raw), str(wj),
+                   lang=lang, sarvam_voice_id=sarvam_voice_id)
         w = _json.loads(wj.read_text(encoding="utf-8"))
         # cut to the speech: 30 ms before the first word, 110 ms after the last
         cut0 = max(0.0, w[0]["start"] - 0.03)

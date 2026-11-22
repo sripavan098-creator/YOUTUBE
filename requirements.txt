@@ -9,3 +9,4 @@ schedule
 python-dotenv
 mutagen
 pyyaml
+sarvamai>=0.1.37
