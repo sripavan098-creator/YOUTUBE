@@ -54,14 +54,19 @@ import pathlib
 import subprocess
 import wave
 
-# mood -> (rate %, pitch Hz, volume %) added to the channel's base settings
+# mood -> (rate %, pitch Hz, volume %) added to the channel's base settings.
+# Wider swings make the voice feel like a person, not a reader.
+# Base rate in config.yaml should be +12% (energetic); moods shift from there.
 MOODS = {
-    "shock": (10, 4, 6), "urgent": (14, 3, 4), "excited": (10, 5, 4),
-    "curious": (-2, 2, 0), "calm": (-6, -2, -2), "serious": (-8, -4, 2),
+    "shock":    (+16, +6,  +8),   # fast, high, loud – grabs instantly
+    "urgent":   (+20, +4,  +6),   # fastest – racing against time
+    "excited":  (+14, +8,  +6),   # high energy, natural enthusiasm
+    "curious":  (0,   +3,  0),    # neutral – conversational
+    "calm":     (-8,  -3,  -4),   # deliberate slowdown – feels like a human pause
+    "serious":  (-12, -6,  +3),   # slow, low, louder – payoff lands with weight
 }
-# seconds of silence BEFORE a beat, by role. The pause before a payoff is the cheapest
-# way to make it land.
-GAP_BEFORE = {"hook": 0.0, "fact": 0.10, "rehook": 0.32, "payoff": 0.38, "loop": 0.26}
+# Silence BEFORE a beat (seconds). The dramatic pause before payoff is free emotion.
+GAP_BEFORE = {"hook": 0.0, "fact": 0.08, "rehook": 0.28, "payoff": 0.42, "loop": 0.22}
 DEFAULT_MOOD = {"hook": "shock", "fact": "curious", "rehook": "urgent",
                 "payoff": "serious", "loop": "curious"}
 

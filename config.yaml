@@ -14,8 +14,8 @@ channels:
     color: "#FF6B00"
     accent: "#FFD166"
     voice: hi-IN-MadhurNeural
-    rate: "+8%"
-    pitch: "+2Hz"
+    rate: "+14%"
+    pitch: "+3Hz"
     lang: hi
     trends_geo: ["IN"]
     audience: india
@@ -29,8 +29,8 @@ channels:
     color: "#06B6D4"
     accent: "#FFFFFF"
     voice: te-IN-MohanNeural
-    rate: "+8%"
-    pitch: "+2Hz"
+    rate: "+14%"
+    pitch: "+3Hz"
     lang: te
     trends_geo: ["IN-AP", "IN-TG", "IN"]
     audience: south_india

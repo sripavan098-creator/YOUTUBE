@@ -149,18 +149,49 @@ def _pexels_video(q, used, dest):
 # ---------------------------------------------------------------- public
 
 def fetch_shots(keywords, dest_dir):
-    """Return one local media path per keyword, in order. If a query finds nothing it is
-    retried with its last word, then a generic India-tech query, then the previous beat's
-    photo, so a cut always lands on the beat."""
+    """Return one UNIQUE local media path per keyword, in order.
+
+    Each beat gets a different photo — no repeats within a video.
+    Fallback ladder per beat:
+      1. Original query
+      2. Last word of the query (broader)
+      3. First word of the query (broader)
+      4. Synonym queries derived from the original
+      5. Random India-tech sub-topic (not always the same generic fallback)
+    If nothing found → None → renderer shows a designed poster (intentional, not lazy).
+    """
     dest_dir = pathlib.Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     used, paths = set(), []
+
+    # Different India-tech fallbacks so we don't get the same stock image every time
+    INDIA_FALLBACKS = [
+        "india technology smartphone",
+        "indian student laptop",
+        "india city tech",
+        "coding india",
+        "indian startup office",
+        "mobile payment india",
+        "india digital future",
+        "tech india young",
+    ]
+
     for i, q in enumerate(keywords):
         dest = dest_dir / str(i)
+        words = q.split()
         ladder = [q]
-        if len(q.split()) > 1:
-            ladder.append(q.split()[-1])
-        ladder.append("india technology")
+        if len(words) > 1:
+            ladder.append(words[-1])          # last word (usually the subject)
+            ladder.append(words[0])           # first word (usually the action)
+        # India-specific version of the query
+        if "india" not in q.lower():
+            ladder.append(q + " india")
+        # Rotate through the fallback pool so consecutive "nothing found" beats
+        # each get a different generic image instead of all becoming the same poster
+        ladder.append(INDIA_FALLBACKS[i % len(INDIA_FALLBACKS)])
+        # One more unique fallback just for this beat index
+        ladder.append(INDIA_FALLBACKS[(i + 3) % len(INDIA_FALLBACKS)])
+
         got = None
         for query in ladder:
             for fn in (_unsplash_photo, _pexels_video):
@@ -172,8 +203,10 @@ def fetch_shots(keywords, dest_dir):
                     break
             if got:
                 break
-        # None keeps the list aligned with the beats; the renderer draws a designed
-        # poster for it, which looks intentional where a repeated photo looks lazy.
+
+        # None keeps alignment with beats — renderer draws a designed poster,
+        # which looks intentional. A repeated photo looks lazy, so we never fall
+        # back to the previous beat's path.
         paths.append(str(got) if got else None)
         if not got:
             print(f"  no footage for '{q}' -> poster scene")
