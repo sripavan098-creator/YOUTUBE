@@ -1,55 +1,56 @@
-import json
+import os
 import pathlib
-import time
+import sys
 
-import requests
-
-from pipeline import host
+from dotenv import load_dotenv
+from instagrapi import Client
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-BASE = "https://graph.instagram.com/v23.0"
-POLL_INTERVAL = 10
-POLL_TRIES = 60
+load_dotenv(ROOT / ".env")
 
 
-def _token(lang):
-    return json.loads((ROOT / "tokens" / f"ig_{lang}.json").read_text(encoding="utf-8"))
+def publish(lang, path, caption, name=None):
+    """Upload a Reel directly with the account credentials for ``lang``."""
+    video_path = pathlib.Path(path)
+    if not video_path.is_file():
+        raise FileNotFoundError(f"Video not found: {video_path}")
+
+    user_key = f"IG_USER_{lang.upper()}"
+    password_key = f"IG_PASS_{lang.upper()}"
+    user = os.getenv(user_key)
+    password = os.getenv(password_key)
+    if not user or not password:
+        raise ValueError(f"Missing {user_key} or {password_key} in .env")
+
+    print(f"Logging into Instagram as @{user}...")
+    client = Client()
+    if not client.login(user, password):
+        raise RuntimeError(f"Instagram login failed for @{user}")
+
+    print(f"Uploading Reel: {video_path.name}")
+    media = client.clip_upload(path=video_path, caption=caption)
+    print(f"Reel posted to @{user}")
+    return str(media.pk)
 
 
-def publish(lang, path, caption, name):
-    tok = _token(lang)
-    ig_id, access = tok["user_id"], tok["access_token"]
-    public_url = host.upload(path, name)
+def upload_reel(video_path, caption, lang):
+    """Upload a Reel from the command line and report success as a boolean."""
     try:
-        container = requests.post(f"{BASE}/{ig_id}/media", data={
-            "media_type": "REELS",
-            "video_url": public_url,
-            "caption": caption[:2200],
-            "share_to_feed": "true",
-            "access_token": access,
-        }, timeout=120).json()
-        if "id" not in container:
-            raise RuntimeError(f"container create failed: {container}")
+        publish(lang, video_path, caption)
+    except Exception as exc:
+        print(f"Instagram upload failed: {exc}")
+        return False
+    return True
 
-        for _ in range(POLL_TRIES):
-            st = requests.get(f"{BASE}/{container['id']}", params={
-                "fields": "status_code,status", "access_token": access}, timeout=60).json()
-            code = st.get("status_code")
-            if code == "FINISHED":
-                break
-            if code in ("ERROR", "EXPIRED"):
-                raise RuntimeError(f"container {code}: {st.get('status')}")
-            time.sleep(POLL_INTERVAL)
-        else:
-            raise RuntimeError("container never reached FINISHED")
 
-        result = requests.post(f"{BASE}/{ig_id}/media_publish", data={
-            "creation_id": container["id"], "access_token": access}, timeout=120).json()
-        if "id" not in result:
-            raise RuntimeError(f"publish failed: {result}")
-        return result["id"]
-    finally:
-        try:
-            host.delete(name)
-        except Exception as e:
-            print(f"host cleanup failed for {name}: {e}")
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print("Usage: python publish_ig.py <video_path> <lang> [caption]")
+        sys.exit(1)
+
+    video = sys.argv[1]
+    lang = sys.argv[2]
+    caption = sys.argv[3] if len(sys.argv) > 3 else (
+        "Automated upload test! #techmuchatlu #ai #technews"
+    )
+    sys.exit(0 if upload_reel(video, caption, lang) else 1)

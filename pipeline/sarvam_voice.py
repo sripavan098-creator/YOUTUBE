@@ -23,6 +23,7 @@ import subprocess
 import time
 
 import requests
+from sarvamai import SarvamAI
 
 SARVAM_BASE = "https://api.sarvam.ai"
 
@@ -86,20 +87,14 @@ def register_voice(sample_wav_path: str, lang: str, name: str = "my-cloned-voice
     lang_code = LANG_CODE.get(lang, "en-IN")
     print(f"  [sarvam] uploading voice sample {sample_path.name} for {lang_code}...")
     with open(sample_path, "rb") as f:
-        r = requests.post(
-            f"{SARVAM_BASE}/voices/create",
-            headers={"api-subscription-key": key},
-            files={"file": (sample_path.name, f, "audio/wav")},
-            data={
-                "name": name,
-                "language": lang_code,
-                "style": "conversational",
-                "remove_background_noise": "true",
-            },
-            timeout=120,
+        response = SarvamAI(api_subscription_key=key).voice_cloning.create_voice(
+            file=f,
+            name=name,
+            language=lang_code,
+            style="conversational",
+            remove_background_noise=True,
         )
-    r.raise_for_status()
-    voice_id = r.json()["data"]["voice_id"]
+    voice_id = response.data.voice_id
     print(f"  [sarvam] cloned voice registered: {voice_id}")
     cache[cache_key] = voice_id
     _save_cache(cache)
@@ -123,43 +118,44 @@ def synth_sarvam(
     lang_code = LANG_CODE.get(lang, "en-IN")
     voice = voice_id or DEFAULT_VOICES.get(lang, "ritu_hi_conversation")
 
-    payload: dict = {
-        "inputs": [text],
-        "target_language_code": lang_code,
-        "speaker": voice,
-        "pace": pace,
-        "enable_preprocessing": True,
-        "model": "bulbul:v4",
-    }
-    # If voice_id is a cloned voice (starts with 'voice_'), use the clone endpoint
-    if voice_id and voice_id.startswith("voice_"):
-        endpoint = f"{SARVAM_BASE}/voices/clone"
-        payload = {
-            "text": text,
-            "voice_id": voice_id,
-            "language_code": lang_code,
-            "pace": pace,
-        }
-        resp_key = "audio_b64"
-    else:
-        endpoint = f"{SARVAM_BASE}/text-to-speech"
-        resp_key = "audios"
-
     last = None
     for i in range(attempts):
         try:
-            r = requests.post(endpoint, headers=_headers(), json=payload, timeout=60)
-            if r.status_code == 429:
-                time.sleep(5 * (i + 1))
-                continue
-            r.raise_for_status()
-            data = r.json()
-
-            # Decode audio
-            if resp_key == "audios":
-                audio_b64 = data["audios"][0]
+            if voice_id and voice_id.startswith("svc-"):
+                response = SarvamAI(
+                    api_subscription_key=os.environ["SARVAM_API_KEY"]
+                ).voice_cloning.convert(
+                    voice_id=voice_id,
+                    text=text,
+                    language_code=lang_code,
+                    pace=pace,
+                    output_audio_codec="wav",
+                )
+                audio_b64 = getattr(response, "audio_b64", None) or getattr(
+                    response, "audio", None
+                )
+                if not audio_b64:
+                    raise RuntimeError("Sarvam cloned-voice API returned no audio data")
             else:
-                audio_b64 = data.get("audio_b64") or data.get("audio")
+                payload = {
+                    "inputs": [text],
+                    "target_language_code": lang_code,
+                    "speaker": voice,
+                    "pace": pace,
+                    "enable_preprocessing": True,
+                    "model": "bulbul:v4",
+                }
+                r = requests.post(
+                    f"{SARVAM_BASE}/text-to-speech",
+                    headers=_headers(),
+                    json=payload,
+                    timeout=60,
+                )
+                if r.status_code == 429:
+                    time.sleep(5 * (i + 1))
+                    continue
+                r.raise_for_status()
+                audio_b64 = r.json()["audios"][0]
 
             raw = base64.b64decode(audio_b64)
             wav_path = pathlib.Path(wav_out)
