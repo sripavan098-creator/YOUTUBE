@@ -21,6 +21,7 @@ channels:
     audience: india
     yt_start: "18:00"
     cta: "गाइड का लिंक बायो में है। रोज़ फ़ॉलो करें"
+    nudge: "कल का पार्ट मिस मत करना, फ़ॉलो करें"
     monet_link: "https://yourinstamojo.com/vincodez-guides"
   te:
     handle: "@techmuchatlu-official"
@@ -35,6 +36,7 @@ channels:
     audience: south_india
     yt_start: "17:30"
     cta: "గైడ్ లింక్ బయోలో ఉంది. రోజూ ఫాలో అవ్వండి"
+    nudge: "రేపటి పార్ట్ మిస్ అవ్వకండి, ఫాలో చేయండి"
     monet_link: "https://yourinstamojo.com/techmuchatlu-guides"
 
 stories_per_channel: 4
@@ -48,5 +50,7 @@ yt_step_min: 20
 yt_public_after_audit: false
 # v3: retention upgrades
 sfx: true            # soft whoosh on every scene cut
-music_volume: 0.12   # used only if you drop royalty-free tracks in assets/music/
+music_volume: 0.16   # bed under the voice (ducks to about -26 dB while speaking); 0 = no music
+# v4
+polish: true         # second LLM pass that tightens every line (kept only if it passes the validator)
 trends: true       # boost stories that match what India is searching on Google right now

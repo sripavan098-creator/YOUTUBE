@@ -54,7 +54,12 @@ Return STRICT JSON:
  "title": "<=60 chars, native script, a curiosity gap or a concrete stake, never a summary.
            If a TRENDING_SEARCH is given and fits, include it the way people type it.",
  "hook_text": "2-5 native words shown huge on screen in the first 2 seconds",
- "beats": [{{"line": "one spoken sentence", "shot": "2-3 English words for a photo search"}}],
+ "beats": [{{"line": "one spoken sentence", "shot": "2-3 English words for a photo search",
+            "role": "hook | fact | rehook | payoff | loop",
+            "mood": "shock | urgent | excited | curious | calm | serious (how it is SPOKEN)",
+            "slam": "optional: ONE word from the line, thrown huge on screen",
+            "stat": "optional: a number or 2-word claim from the line to show as a big card, e.g. \u20b91,500"}}],
+ "search_terms": ["6-8 phrases people really type into YouTube search for this topic: 3-4 in the native script, 3-4 in English"],
  "emphasis": ["up to 8 single words copied exactly from the lines that deserve color"],
  "description": "2 lines in native script. Line 1 carries the main keyword and the hook. Line 2 asks a question.",
  "ig_caption": "hook line, blank line, 2 short lines, a question, blank line, 5 hashtags",
@@ -75,6 +80,17 @@ STRUCTURE after the hook:
 3. beats[-2]: the payoff that closes the loop the hook opened.
 4. beats[-1]: a question that invites a comment AND echoes the first beat so the video
    loops cleanly when it replays.
+
+HOOK ARCHETYPE for this video: {archetype}
+
+DIRECTION (this drives voice, sound and screen, so use it deliberately):
+- role: beats[0]="hook", one middle beat="rehook", beats[-2]="payoff", beats[-1]="loop",
+  the rest "fact".
+- mood: the hook is "shock" or "urgent"; the payoff is "serious" or "calm"; do not give every
+  beat the same mood. A calm beat right before a shocking one makes the shock land.
+- slam: on at most 3 beats (never the hook), the single most powerful word. stat: on at
+  most 2 beats, only a real number or a 2-word claim that is in the source.
+- Never say "subscribe" or "follow" inside the lines; the screen handles that.
 
 STYLE:
 - 6 to 9 beats, each 5 to 14 words. Total 60-95 words. Short punchy sentences.
@@ -110,6 +126,16 @@ not copy, match the energy):
   "सावधान! ये एक गलती और आपका खाता खाली!"
 """,
     "en": "Write plain, punchy spoken English.",
+}
+
+
+HOOK_ARCHETYPES = {
+    "stake": "Threaten something the viewer owns: their money, phone, account, job, data.",
+    "secret": "Promise a thing they are being kept from: 'the setting nobody tells you about'.",
+    "number": "Open on one shocking number or amount, then say what it means for them.",
+    "question": "Ask a question they cannot answer yet and badly want to.",
+    "contrarian": "Say the opposite of what they believe, in one line, then prove it.",
+    "countdown": "Urgency: something ends, changes or starts today and they must act.",
 }
 
 
@@ -306,12 +332,13 @@ def propose_angles(story, cfg):
     raise RuntimeError("angle generation failed -> " + " | ".join(errors))
 
 
-def write_script(story, angle, lcfg, cfg, note=""):
+def write_script(story, angle, lcfg, cfg, note="", archetype="stake"):
     """Write the picked angle natively for one channel. Retries feed the exact failure
     back to the model so the second attempt fixes the specific rule that was broken."""
     system = SYS_WRITE.format(lang_name=LANG_NAME.get(lcfg["lang"], lcfg["lang"]),
                               style=LANG_STYLE.get(lcfg["lang"], ""),
-                              brand=lcfg["brand"], audience=lcfg["audience"].replace("_", " "))
+                              brand=lcfg["brand"], audience=lcfg["audience"].replace("_", " "),
+                              archetype=f"{archetype}: {HOOK_ARCHETYPES.get(archetype, '')}")
     base = (_story_prompt(story) +
             f"\n\nANGLE: {angle['take']}\nHOOK_IDEA (translate the energy, not the words): "
             f"{angle.get('hook_idea', '')}\nKEY_FACTS:\n" +
@@ -334,7 +361,11 @@ def write_script(story, angle, lcfg, cfg, note=""):
                 data = _extract_json(raw)
                 reason = check_script(data, lcfg.get("lang"))
                 if reason is None:
-                    return _finish(data, lcfg)
+                    data = _finish(data, lcfg)
+                    data["archetype"] = archetype
+                    if cfg.get("polish", True):
+                        data = _polish(data, system, base, fn, model, lcfg)
+                    return data
                 feedback = (f"\n\nYOUR PREVIOUS ANSWER WAS REJECTED: {reason}. "
                             f"Fix exactly that and return the full JSON again.")
                 _dump(f"{slug}_{model.replace('/', '-')}_{attempt}", raw)
@@ -345,6 +376,67 @@ def write_script(story, angle, lcfg, cfg, note=""):
                 errors.append(f"{model}#{attempt + 1}: {e}")
                 break
     raise RuntimeError("script writing failed -> " + " | ".join(errors))
+
+
+ROLES = {"hook", "fact", "rehook", "payoff", "loop"}
+MOODS = {"shock", "urgent", "excited", "curious", "calm", "serious"}
+_STRIP = ".,!?।…\"'“”‘’():;-"
+
+
+def _direct(d):
+    """Make the director fields safe whatever the model returned: valid roles and moods,
+    slam words that really are in their line, short stats, never more than the budget."""
+    beats = d["beats"]
+    n = len(beats)
+    for i, b in enumerate(beats):
+        role = str(b.get("role", "")).strip().lower()
+        if i == 0:
+            role = "hook"
+        elif i == n - 1:
+            role = "loop"
+        elif i == n - 2:
+            role = "payoff"
+        elif role not in ROLES or role in ("hook", "loop", "payoff"):
+            role = "fact"
+        b["role"] = role
+        mood = str(b.get("mood", "")).strip().lower()
+        b["mood"] = mood if mood in MOODS else ""
+    if not any(b["role"] == "rehook" for b in beats) and n >= 5:
+        beats[n // 2]["role"] = "rehook"  # the turn the retention curve needs
+    slams, stats = 0, 0
+    for i, b in enumerate(beats):
+        words = [w.strip(_STRIP) for w in b["line"].split()]
+        sl = str(b.get("slam") or "").strip().strip(_STRIP)
+        if i == 0 or sl not in words or slams >= 3:
+            b.pop("slam", None)
+        else:
+            b["slam"] = sl
+            slams += 1
+        st = str(b.get("stat") or "").strip()
+        if i == 0 or not st or len(st) > 12 or stats >= 2:
+            b.pop("stat", None)
+        else:
+            b["stat"] = st
+            stats += 1
+
+
+def _seo_tags(d, lcfg):
+    """YouTube tags: the model's real search phrases first, then hashtag words, deduplicated
+    and kept inside the 500-character tag budget."""
+    out, seen, total = [], set(), 0
+    cands = [str(t).strip() for t in d.get("search_terms", []) if isinstance(t, str)]
+    cands += [t.lstrip("#") for t in d.get("hashtags", [])]
+    cands += ["shorts", "tech news", "telugu" if lcfg["lang"] == "te" else "hindi"]
+    for t in cands:
+        k = t.lower()
+        if not t or k in seen or len(t) > 60:
+            continue
+        if total + len(t) + 1 > 480:
+            break
+        seen.add(k)
+        out.append(t)
+        total += len(t) + 1
+    return out
 
 
 def _finish(d, lcfg):
@@ -371,8 +463,39 @@ def _finish(d, lcfg):
     if "#shorts" not in [t.lower() for t in tags]:
         tags.insert(0, "#shorts")
     d["hashtags"] = tags[:8]
+    _direct(d)
+    d["tags"] = _seo_tags(d, lcfg)
     d.setdefault("description", d["title"])
     d.setdefault("ig_caption", d["title"] + "\n\n" + " ".join(d["hashtags"][:5]))
+    return d
+
+
+SYS_POLISH = """You are a ruthless retention editor for {lang_name} Shorts. Below is a draft
+script as JSON. Improve ONLY the wording of the "line" fields: cut every filler word, make the
+hook hit harder in fewer words, make each beat start with its strongest word, sharpen the
+re-hook and the payoff, and keep it sounding like a native speaker talking to a friend.
+Keep: the same number of beats, the same facts, the same roles/moods/shots/slam/stat fields,
+native script only (no Latin letters), hook <= 8 words, a closing question. Do not add facts.
+Return the FULL JSON again with the same keys. ONLY raw JSON."""
+
+
+def _polish(d, system, base, fn, model, lcfg):
+    """One critic pass. If its output breaks any rule we keep the original: polishing may
+    only ever improve a script, never lose one."""
+    try:
+        slim = {k: d[k] for k in ("title", "hook_text", "beats", "emphasis", "description",
+                                  "ig_caption", "hashtags", "search_terms") if k in d}
+        raw = fn(SYS_POLISH.format(lang_name=LANG_NAME.get(lcfg["lang"], lcfg["lang"])),
+                 json.dumps(slim, ensure_ascii=False), model, 0.5)
+        cand = _extract_json(raw)
+        if check_script(cand, lcfg.get("lang")) is None and len(cand["beats"]) == len(d["beats"]):
+            cand = _finish(cand, lcfg)
+            cand["archetype"] = d.get("archetype")
+            print("  polish pass applied")
+            return cand
+        print("  polish pass rejected by validator, keeping original")
+    except Exception as e:
+        print(f"  polish pass failed ({str(e)[:60]}), keeping original")
     return d
 
 

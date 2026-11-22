@@ -1,17 +1,32 @@
-import { loadFont as deva } from '@remotion/google-fonts/NotoSansDevanagari';
-import { loadFont as telu } from '@remotion/google-fonts/NotoSansTelugu';
-
-// Load only what the videos use: the bold weights and the script + latin subsets.
-// Calling loadFont() with no options fetches every weight x subset (54 files), which is
-// slow and can exceed the 30s render timeout on a slow connection.
-const weights: ('800' | '900')[] = ['800', '900'];
-const devanagari = deva('normal', { weights, subsets: ['devanagari', 'latin'] }).fontFamily;
-const telugu = telu('normal', { weights, subsets: ['telugu', 'latin'] }).fontFamily;
+import { useEffect, useState } from 'react';
+import { continueRender, delayRender } from 'remotion';
+// Bundled with the repo (npm i), so a render never depends on a font CDN being reachable.
+import '@fontsource/noto-sans-telugu/telugu-800.css';
+import '@fontsource/noto-sans-telugu/telugu-900.css';
+import '@fontsource/noto-sans-telugu/latin-800.css';
+import '@fontsource/noto-sans-telugu/latin-900.css';
+import '@fontsource/noto-sans-devanagari/devanagari-800.css';
+import '@fontsource/noto-sans-devanagari/devanagari-900.css';
+import '@fontsource/noto-sans-devanagari/latin-800.css';
+import '@fontsource/noto-sans-devanagari/latin-900.css';
 
 const SANS = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 
 export const fontFor = (lang: 'hi' | 'te' | 'en'): string => {
-  if (lang === 'hi') return `${devanagari}, ${SANS}`;
-  if (lang === 'te') return `${telugu}, ${SANS}`;
+  if (lang === 'hi') return `"Noto Sans Devanagari", ${SANS}`;
+  if (lang === 'te') return `"Noto Sans Telugu", ${SANS}`;
   return SANS;
+};
+
+// Hold the render until the glyphs are actually loaded, so frame 1 is never in a fallback font.
+export const useFontsReady = (lang: 'hi' | 'te' | 'en') => {
+  const [handle] = useState(() => delayRender('fonts'));
+  useEffect(() => {
+    const fam = lang === 'hi' ? 'Noto Sans Devanagari' : lang === 'te' ? 'Noto Sans Telugu' : '';
+    const sample = lang === 'hi' ? 'अआक' : lang === 'te' ? 'అఆక' : 'A';
+    const loads = fam
+      ? [`800 60px "${fam}"`, `900 60px "${fam}"`].map((f) => document.fonts.load(f, sample))
+      : [];
+    Promise.all(loads).catch(() => undefined).finally(() => continueRender(handle));
+  }, [handle, lang]);
 };

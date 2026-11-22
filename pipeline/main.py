@@ -39,7 +39,7 @@ sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
 from pipeline import (audio, db, publish_ig, publish_yt, refresh_ig, render, review,  # noqa: E402
-                      scripts, sources, timing, trends, visuals, voice, longform)
+                      learn, scripts, sources, timing, trends, visuals, voice, longform)
 
 def _clean_dict(script):
     """Bulletproof sanitizer: Nukes ALL control characters from metadata."""
@@ -134,6 +134,36 @@ def _angle_for(channel, channels, chosen, all_angles, shared):
     return all_angles[(i + order.index(channel)) % len(all_angles)]
 
 
+def _gap_after_hook(script):
+    """Silence the voice engine puts after the hook (owned by beat 0, not spoken)."""
+    nxt = script["beats"][1].get("role", "fact") if len(script["beats"]) > 1 else "fact"
+    return voice.GAP_BEFORE.get(nxt, 0.1)
+
+
+def _recent_archetypes(channel, n=3):
+    rows = db.DB.execute("SELECT archetype FROM stories WHERE channel=? AND archetype IS NOT NULL "
+                         "ORDER BY id DESC LIMIT ?", (channel, n)).fetchall()
+    return [r[0] for r in reversed(rows)]
+
+
+def _tokens(t):
+    return {w for w in re.findall(r"[a-z0-9]{3,}", t.lower())}
+
+
+def _repeats_recent(channel, story, threshold=0.6):
+    """True when this story is the same topic as something the channel made in the last two
+    weeks (different outlet, same news). Repetition is what gets a channel judged as
+    mass-produced, and viewers do not need the same video twice."""
+    mine = _tokens(story["title"])
+    if len(mine) < 3:
+        return False
+    for t in db.recent_titles(channel):
+        other = _tokens(t)
+        if other and len(mine & other) / len(mine | other) >= threshold:
+            return True
+    return False
+
+
 def morning():
     day = datetime.date.today().isoformat()
     channels = CFG["channels"]
@@ -141,7 +171,8 @@ def morning():
 
     trend_items = trends.fetch_all(CFG) if CFG.get("trends", True) else []
     fresh = [s for s in sources.top_stories(20, trend_items=trend_items)
-             if not any(db.seen(ch, s["url"]) for ch in channels)]
+             if not any(db.seen(ch, s["url"]) for ch in channels)
+             and not all(_repeats_recent(ch, s) for ch in channels)]
     if not fresh:
         print("no new stories")
         return
@@ -191,16 +222,17 @@ def morning():
                 mp3 = ROOT / "out" / f"{sid}_{channel}.mp3"
                 wj = ROOT / "out" / f"{sid}_{channel}.json"
                 note = ""
+                archetype = learn.pick_archetype(channel, _recent_archetypes(channel))
+                print(f"  hook archetype: {archetype}")
                 for attempt in range(2):
-                    script = scripts.write_script(story, angle, lcfg, CFG, note=note)
-                    duration = voice.synth(script["script"], lcfg["voice"], lcfg["rate"],
-                                           str(raw_mp3), str(wj),
-                                           pitch=lcfg.get("pitch", "+0Hz"),
-                                           volume=lcfg.get("volume", "+0%"))
-                    words = json.loads(wj.read_text(encoding="utf-8"))
-                    lines = [b["line"] for b in script["beats"]]
-                    beats = timing.beat_times(lines, words, duration)
-                    hook_s = beats[0][1]
+                    script = scripts.write_script(story, angle, lcfg, CFG, note=note,
+                                                  archetype=archetype)
+                    # every beat is voiced on its own with its mood, then stitched with
+                    # deliberate pauses, so beat times are exact (no estimating from words)
+                    words, beats, duration = voice.synth_beats(
+                        script["beats"], lcfg, ROOT / "out" / f"vo_{sid}_{channel}", raw_mp3)
+                    wj.write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
+                    hook_s = beats[0][1] - _gap_after_hook(script)
                     if hook_s <= HOOK_MAX_SEC or attempt == 1:
                         if hook_s > HOOK_MAX_SEC:
                             print(f"  hook still {hook_s:.1f}s after rewrite; keeping it")
@@ -210,9 +242,14 @@ def morning():
                             f"words that states the stake immediately.")
                     print(f"  hook {hook_s:.1f}s too slow, rewriting once")
                 shots = visuals.fetch_shots(script["shots"], ROOT / "out" / f"shots_{sid}_{channel}")
-                duration = audio.finish(raw_mp3, mp3, [s for s, _ in beats], duration,
+                starts = [s for s, _ in beats]
+                cues = audio.default_cues(starts, [b["role"] for b in script["beats"]])
+                for b, (st, _e) in zip(script["beats"], beats):
+                    if b.get("slam") or b.get("stat"):
+                        cues.append((st + 0.2, "pop"))
+                duration = audio.finish(raw_mp3, mp3, starts, duration,
                                         sfx=CFG.get("sfx", True),
-                                        music_volume=CFG.get("music_volume", 0.12))
+                                        music_volume=CFG.get("music_volume", 0.16), cues=cues)
                 video = render.render(sid, channel, lcfg, script, str(mp3), str(wj),
                                       duration, shots, layout, beats=beats)
                 # Persist the generated metadata next to the mp4 so a later batch
@@ -220,7 +257,9 @@ def morning():
                 (ROOT / "out" / f"{sid}_{channel}.meta.json").write_text(
                     json.dumps({"title": script["title"],
                                 "description": script.get("description") or script["script"].split(".")[0],
-                                "hashtags": script["hashtags"]}, ensure_ascii=False),
+                                "hashtags": script["hashtags"], "tags": script.get("tags", []),
+                                "search_terms": script.get("search_terms", []),
+                                "archetype": archetype}, ensure_ascii=False),
                     encoding="utf-8")
                 try:
                     vid_id, slot, privacy = publish_yt.upload(
@@ -233,6 +272,7 @@ def morning():
                 except Exception as e:
                     vid_id, privacy = None, "private"
                     print(f"YT upload failed {channel}: {e} (video kept in out/)")
+                db.set_archetype(sid, archetype)
                 db.set_produced(sid, layout, angle["angle_id"], video, vid_id, privacy)
                 db.set_caption(sid, script.get("ig_caption") or f"#shorts #{channel}")
                 db.set_status(sid, "done")
@@ -281,6 +321,8 @@ def pump_ig():
 def main():
     if "--now" in sys.argv:
         morning()
+    elif "--learn" in sys.argv:
+        learn.refresh_stats()
     elif "--ig" in sys.argv:
         pump_ig()
     elif "--longform" in sys.argv:
@@ -289,6 +331,7 @@ def main():
         from pipeline import replay
         replay.replay_all()
     else:
+        schedule.every().day.at("05:30").do(learn.refresh_stats)
         schedule.every().day.at("06:00").do(morning)
         schedule.every().tuesday.at("10:00").do(longform.build_all)
         schedule.every().friday.at("10:00").do(longform.build_all)

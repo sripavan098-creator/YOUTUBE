@@ -1,10 +1,16 @@
 export type Word = { text: string; start: number; end: number };
 
 export type Scene = {
-  src: string;
-  kind: 'video' | 'image';
+  src: string; // '' means: no photo, draw a designed poster instead
+  kind: 'video' | 'image' | 'poster';
   start: number; // seconds
   end: number; // seconds
+  // v4 director fields, all optional
+  role?: 'hook' | 'fact' | 'rehook' | 'payoff' | 'loop';
+  slam?: string; // one word thrown huge on screen
+  slamAt?: number; // seconds, when that word is spoken
+  stat?: string; // a big number / short phrase shown as a card
+  shake?: boolean; // camera impact
 };
 
 export type ShortProps = {
@@ -18,8 +24,8 @@ export type ShortProps = {
   audioDuration: number;
   words: Word[];
   shots: string[];
-  // v3 fields. All optional so props written by older renders still load.
   hook?: string;
   emphasis?: string[];
   scenes?: Scene[];
+  nudge?: string; // value-first follow prompt shown mid-video
 };

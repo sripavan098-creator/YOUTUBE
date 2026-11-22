@@ -25,18 +25,34 @@ def npx_bin():
 
 
 def _scenes(shot_paths, beats, duration):
-    """Pair every cut with a media file. Beats come from timing.beat_times; without
-    them (long-form) cut on a fixed rhythm and cycle through the footage."""
+    """Pair every cut with a media file (None = poster). Beats come from voice.synth_beats;
+    without them (long-form) cut on a fixed rhythm and cycle through the footage."""
     total = duration + TAIL
+    had_beats = bool(beats)
     if not beats:
         n = max(1, int(total // FALLBACK_CUT))
         step = total / n
         beats = [(i * step, (i + 1) * step) for i in range(n)]
+    real = [p for p in shot_paths if p]
     out = []
     for i, (s, e) in enumerate(beats):
-        out.append((shot_paths[i % len(shot_paths)], s, e))
+        if had_beats and i < len(shot_paths):
+            src = shot_paths[i]
+        else:
+            src = real[i % len(real)] if real else None
+        out.append((src, s, e))
     out[-1] = (out[-1][0], out[-1][1], total)  # the last scene runs through the tail
     return out
+
+
+def _slam_time(word, words, s, e):
+    """When the slammed word is actually spoken inside its beat."""
+    strip = ".,!?।…\"'“”‘’():;-"
+    key = word.strip(strip)
+    for w in words:
+        if s - 0.05 <= w["start"] < e and w["text"].strip(strip) == key:
+            return w["start"]
+    return None
 
 
 def _prep_clip(src, dst, seconds):
@@ -53,24 +69,40 @@ def _prep_clip(src, dst, seconds):
 
 def render(sid, channel, lcfg, script, mp3, words_json, duration, shot_paths, layout,
            beats=None):
-    if not shot_paths:
-        raise RuntimeError(f"no footage fetched for {sid}/{channel}")
     pub = REMOTION / "public" / "a" / str(sid) / channel
     if pub.exists():
         shutil.rmtree(pub)
     pub.mkdir(parents=True, exist_ok=True)
     shutil.copy(mp3, pub / "v.mp3")
 
+    words = json.loads(pathlib.Path(words_json).read_text(encoding="utf-8"))
+    meta = script.get("beats") or []
+    use_meta = bool(beats) and len(meta) == len(beats)
     scenes = []
     for i, (src, s, e) in enumerate(_scenes(shot_paths, beats, duration)):
-        if str(src).lower().endswith((".mp4", ".mov", ".webm")):
-            name, kind = f"s{i}.mp4", "video"
+        sc = {"start": round(s, 3), "end": round(e, 3)}
+        if not src:
+            sc.update(src="", kind="poster")
+        elif str(src).lower().endswith((".mp4", ".mov", ".webm")):
+            name = f"s{i}.mp4"
             _prep_clip(src, pub / name, e - s)
+            sc.update(src=f"a/{sid}/{channel}/{name}", kind="video")
         else:
-            name, kind = f"s{i}.jpg", "image"
+            name = f"s{i}.jpg"
             shutil.copy(src, pub / name)
-        scenes.append({"src": f"a/{sid}/{channel}/{name}", "kind": kind,
-                       "start": round(s, 3), "end": round(e, 3)})
+            sc.update(src=f"a/{sid}/{channel}/{name}", kind="image")
+        if use_meta:
+            b = meta[i]
+            sc["role"] = b.get("role") or ("hook" if i == 0 else "fact")
+            sc["shake"] = sc["role"] in ("rehook", "payoff") or bool(b.get("shake"))
+            if i and b.get("slam"):
+                sc["slam"] = b["slam"]
+                at = _slam_time(b["slam"], words, s, e)
+                if at is not None:
+                    sc["slamAt"] = round(at, 3)
+            if i and b.get("stat"):
+                sc["stat"] = str(b["stat"])
+        scenes.append(sc)
 
     props = {
         "lang": lcfg["lang"],
@@ -83,9 +115,10 @@ def render(sid, channel, lcfg, script, mp3, words_json, duration, shot_paths, la
         "cta": lcfg["cta"],
         "audio": f"a/{sid}/{channel}/v.mp3",
         "audioDuration": duration,
-        "words": json.loads(pathlib.Path(words_json).read_text(encoding="utf-8")),
+        "words": words,
+        "nudge": lcfg.get("nudge", ""),
         "scenes": scenes,
-        "shots": [s["src"] for s in scenes],
+        "shots": [s["src"] for s in scenes if s["src"]],
     }
     props_file = pub / "props.json"
     props_file.write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")

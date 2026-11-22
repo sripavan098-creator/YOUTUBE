@@ -24,3 +24,7 @@ manual_auth.py
 force_auth.py
 force_auth_hi.py
 upload_batch.py
+
+assets/sfx/_gen_*
+assets/music/_gen_*
+remotion/public/a/

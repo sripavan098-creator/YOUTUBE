@@ -113,3 +113,11 @@ There is no committed test suite. Each run is verified by doing the real thing:
 | `pipeline/replay.py` | Promote private backlog in place |
 | `pipeline/doctor.py` | Preflight checks |
 | `remotion/src/layouts/` | The four Short compositions |
+
+## v4 (viral engine)
+- **Voice**: every beat is voiced separately with its own mood (shock/urgent/curious/calm/serious), silence trimmed using exact word timings, deliberate pauses before re-hooks and payoffs. Beat cut times are exact.
+- **Sound**: broadcast voice chain (80 Hz HPF, +2 dB warmth, +2.5 dB presence, compression, -14 LUFS); procedural impact / riser / whoosh / pop placed by beat role; generated music bed that ducks under speech. Drop files in `assets/sfx/<kind>.wav` or `assets/music/` to override.
+- **Screen**: flash cuts, re-framing every 2.6 s, impact shake, grade + vignette + grain, hook slam with RGB glitch, kinetic keyword slam, stat cards, mid-video follow nudge, poster scenes when no photo is found. Telugu/Devanagari fonts are bundled (`npm install` in `remotion/`).
+- **Content/SEO**: hook archetypes (stake, secret, number, question, contrarian, countdown), director fields per beat, critic polish pass, real search phrases (native + English) into tags and description, topic de-duplication over 14 days.
+- **Learning**: `python -m pipeline.main --learn` (also nightly 05:30) pulls view stats and steers archetype choice. Only effective once videos are public.
+- Rollback: `git revert` to commit abbba14 (pre-v4).

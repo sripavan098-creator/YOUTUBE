@@ -46,12 +46,14 @@ def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=
             "%Y-%m-%dT%H:%M:%SZ")
 
     desc = script.get("description") or script["script"].split(".")[0].strip()
-    tags = [h.lstrip("#") for h in script["hashtags"]][:15]
+    tags = script.get("tags") or [h.lstrip("#") for h in script["hashtags"]][:15]
+    # first three hashtags are shown above the title, so lead with the strongest ones
+    kw = ", ".join(script.get("search_terms", [])[:6])
     body = {
         "snippet": {
             "title": script["title"][:100],
-            "description": f"{desc}\n\nSource: {source_url}\n\n"
-                           f"{' '.join(script['hashtags'])}",
+            "description": f"{desc}\n\n" + (f"{kw}\n\n" if kw else "") +
+                           f"Source: {source_url}\n\n{' '.join(script['hashtags'])}",
             "tags": tags,
             "categoryId": "28",
             "defaultLanguage": lcfg["lang"],

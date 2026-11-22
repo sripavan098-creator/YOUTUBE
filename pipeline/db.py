@@ -122,3 +122,49 @@ def built_longform_today(channel, day):
 def set_privacy(sid, privacy):
     DB.execute("UPDATE stories SET privacy=? WHERE id=?", (privacy, sid))
     DB.commit()
+
+
+# ---------------------------------------------------------------- v4: learning + dedupe
+DB.execute("CREATE TABLE IF NOT EXISTS perf(sid INTEGER PRIMARY KEY, channel TEXT, archetype TEXT, "
+           "layout TEXT, views INT DEFAULT 0, likes INT DEFAULT 0, comments INT DEFAULT 0, "
+           "checked_at TEXT)")
+try:
+    DB.execute("ALTER TABLE stories ADD COLUMN archetype TEXT")
+except Exception:
+    pass
+DB.commit()
+
+
+def set_archetype(sid, archetype):
+    DB.execute("UPDATE stories SET archetype=? WHERE id=?", (archetype, sid))
+    DB.commit()
+
+
+def recent_titles(channel, days=14):
+    """Source titles this channel produced lately, to keep it from repeating a topic."""
+    import datetime
+    since = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
+    return [r[0] for r in DB.execute(
+        "SELECT title FROM stories WHERE channel=? AND day>=? AND status IN ('done','new')",
+        (channel, since)).fetchall()]
+
+
+def uploaded_stories(min_age_days=1):
+    import datetime
+    until = (datetime.date.today() - datetime.timedelta(days=min_age_days)).isoformat()
+    return DB.execute(
+        "SELECT id, channel, yt_video_id, archetype, layout FROM stories "
+        "WHERE yt_video_id IS NOT NULL AND day<=? AND status='done'", (until,)).fetchall()
+
+
+def save_perf(sid, channel, archetype, layout, views, likes, comments):
+    import datetime
+    DB.execute("INSERT OR REPLACE INTO perf VALUES(?,?,?,?,?,?,?,?)",
+               (sid, channel, archetype, layout, views, likes, comments,
+                datetime.datetime.now().isoformat(timespec="seconds")))
+    DB.commit()
+
+
+def perf_rows(channel):
+    return DB.execute("SELECT archetype, layout, views FROM perf WHERE channel=?",
+                      (channel,)).fetchall()

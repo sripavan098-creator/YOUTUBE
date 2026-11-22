@@ -172,10 +172,9 @@ def fetch_shots(keywords, dest_dir):
                     break
             if got:
                 break
-        if not got and paths:
-            got = paths[-1]
-        if got:
-            paths.append(str(got))
-        else:
-            print(f"  no footage for '{q}'")
+        # None keeps the list aligned with the beats; the renderer draws a designed
+        # poster for it, which looks intentional where a repeated photo looks lazy.
+        paths.append(str(got) if got else None)
+        if not got:
+            print(f"  no footage for '{q}' -> poster scene")
     return paths
