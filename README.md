@@ -1,6 +1,6 @@
 # shorts-engine (v2)
 
-Local automation for two Shorts channels: **Vincodez Tech** (Hindi) and
+Local automation for two Shorts channels: **Vincodez** (Hindi) and
 **Tech Muchatlu** (Telugu). One daemon fetches stories, proposes three angles per story,
 takes your Telegram pick, renders 4 Shorts per channel per day across four rotating
 layouts, schedules them to YouTube, and queues Reels to Instagram.
