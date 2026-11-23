@@ -17,7 +17,7 @@ import type { Scene, ShortProps } from './ShortProps';
 
 export type Variant = 'explainer' | 'list' | 'versus' | 'timeline';
 
-const HOOK_SECONDS = 2.4;
+const HOOK_SECONDS = 2.5;
 const CTA_SECONDS = 2.8;
 const SEG_SECONDS = 2.6; // nothing stays on one framing longer than this
 const ORIGINS = ['50% 38%', '22% 30%', '78% 62%', '50% 74%', '70% 28%', '30% 70%'];
@@ -38,16 +38,37 @@ const sceneList = (p: ShortProps, total: number): Scene[] => {
 
 // ---------------------------------------------------------------- one scene
 
-const Poster = ({ p, index }: { p: ShortProps; index: number }) => (
+const Poster = ({ p, index, text }: { p: ShortProps; index: number; text?: string }) => (
   <AbsoluteFill
     style={{
       background: `radial-gradient(circle at ${index % 2 ? '25% 30%' : '75% 35%'}, ${p.color} 0%, #12121a 62%)`,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 90,
     }}
   >
     <div style={{ position: 'absolute', width: 900, height: 900, borderRadius: 450, right: -300, top: 200,
       border: `22px solid ${p.accent}`, opacity: 0.16 }} />
     <div style={{ position: 'absolute', width: 600, height: 600, borderRadius: 300, left: -200, bottom: 300,
       backgroundColor: p.accent, opacity: 0.1 }} />
+    {text ? (
+      <div style={{
+        position: 'relative',
+        width: '100%',
+        padding: '56px 48px',
+        borderRadius: 36,
+        backgroundColor: 'rgba(8,8,12,.9)',
+        border: `8px solid ${p.accent}`,
+        color: '#fff',
+        fontSize: text.length > 100 ? 64 : text.length > 65 ? 78 : 92,
+        fontWeight: 900,
+        lineHeight: 1.35,
+        textAlign: 'center',
+        boxShadow: `0 28px 80px rgba(0,0,0,.5), 0 0 60px ${p.color}88`,
+      }}>
+        {text}
+      </div>
+    ) : null}
   </AbsoluteFill>
 );
 
@@ -93,7 +114,7 @@ const SceneView = ({ scene, index, p }: { scene: Scene; index: number; p: ShortP
     <AbsoluteFill style={{ backgroundColor: '#0E0E12', overflow: 'hidden' }}>
       {scene.kind === 'poster' || !scene.src ? (
         <div style={{ ...style, filter: 'none' }}>
-          <Poster p={p} index={index} />
+          <Poster p={p} index={index} text={scene.posterText} />
         </div>
       ) : scene.kind === 'video' ? (
         <OffthreadVideo src={staticFile(scene.src)} muted style={style} />

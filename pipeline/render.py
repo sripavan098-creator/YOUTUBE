@@ -82,7 +82,11 @@ def render(sid, channel, lcfg, script, mp3, words_json, duration, shot_paths, la
     for i, (src, s, e) in enumerate(_scenes(shot_paths, beats, duration)):
         sc = {"start": round(s, 3), "end": round(e, 3)}
         if not src:
-            sc.update(src="", kind="poster")
+            sc.update(
+                src="",
+                kind="poster",
+                posterText=meta[i].get("line", "") if use_meta else "",
+            )
         elif str(src).lower().endswith((".mp4", ".mov", ".webm")):
             name = f"s{i}.mp4"
             _prep_clip(src, pub / name, e - s)
@@ -112,7 +116,7 @@ def render(sid, channel, lcfg, script, mp3, words_json, duration, shot_paths, la
         "headline": script["title"],
         "hook": script.get("hook_text") or script["title"],
         "emphasis": script.get("emphasis", []),
-        "cta": lcfg["cta"],
+        "cta": script.get("cta_text") or lcfg["cta"],
         "audio": f"a/{sid}/{channel}/v.mp3",
         "audioDuration": duration,
         "words": words,

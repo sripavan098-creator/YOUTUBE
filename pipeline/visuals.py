@@ -1,22 +1,29 @@
-"""B-roll fetching. Unsplash is the primary (and only required) source: portrait photos,
-one per spoken line. Pexels is used only if PEXELS_API_KEY happens to be set.
+"""B-roll fetching. Unsplash is the primary source; Wikimedia Commons provides a
+no-key fallback for public-domain/CC0 photos. Pexels videos are optional.
 
 Unsplash demo apps are limited to 50 requests/hour, and a batch of 8 Shorts needs ~56
 searches. So every search result list is cached on disk (a repeated query costs nothing),
-the remaining quota is read from Unsplash's own headers, and when it runs out the
-fetcher waits for the next hour instead of failing. Apply for Production access (free,
-5,000/hour) in the Unsplash developer dashboard to remove the wait.
+and the remaining quota is read from Unsplash's own headers. When the demo quota is low,
+the fetcher skips Unsplash and continues with available fallbacks rather than blocking
+the batch. Set UNSPLASH_WAIT=1 to opt into waiting for the hourly reset. Apply for
+Production access (free, 5,000/hour) in the Unsplash developer dashboard to lift the limit.
 """
 import json
 import os
 import pathlib
+import re
 import time
 
 import requests
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CACHE = ROOT / "out" / "unsplash_cache.json"
+WIKIMEDIA_CACHE = ROOT / "out" / "wikimedia_cache.json"
 UNSPLASH = "https://api.unsplash.com"
+WIKIMEDIA = "https://commons.wikimedia.org/w/api.php"
+WIKIMEDIA_HEADERS = {
+    "User-Agent": "YOUTUBE-shorts-pipeline/1.0 (https://github.com/sripavan098-creator/YOUTUBE)"
+}
 PEXELS = "https://api.pexels.com"
 MAX_CLIP_SEC = 20
 MIN_QUOTA = 2          # stop spending requests when this few remain
@@ -25,17 +32,17 @@ MAX_WAIT_SEC = 3700    # never sleep longer than one rate-limit window
 _quota = {"remaining": None}
 
 
-def _load_cache():
+def _load_cache(path=CACHE):
     try:
-        return json.loads(CACHE.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
-def _save_cache(cache):
+def _save_cache(cache, path=CACHE):
     try:
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
 
@@ -49,6 +56,30 @@ def _download(url, path, headers=None):
     return path
 
 
+_VISUAL_STOP_WORDS = {
+    "and", "for", "from", "with", "india", "indian", "photo", "image", "picture",
+    "showing", "about", "the", "of", "a", "an",
+}
+
+
+def _visual_tokens(text):
+    return {
+        token for token in re.findall(r"[a-z0-9]+", str(text).casefold())
+        if len(token) > 2 and token not in _VISUAL_STOP_WORDS
+    }
+
+
+def _is_relevant(query, description):
+    """Only accept stock results whose indexed description supports the search query."""
+    wanted = _visual_tokens(query)
+    if not wanted:
+        return False
+    found = _visual_tokens(description)
+    overlap = len(wanted & found)
+    minimum = 2 if len(wanted) >= 3 else 1
+    return overlap >= minimum
+
+
 # ---------------------------------------------------------------- Unsplash
 
 def _unsplash_headers():
@@ -58,7 +89,7 @@ def _unsplash_headers():
 
 def _wait_for_quota():
     """Sleep to the top of the next hour, when the 50/hour window resets."""
-    if os.environ.get("UNSPLASH_WAIT", "1") == "0":
+    if os.environ.get("UNSPLASH_WAIT", "0") != "1":
         return False
     now = time.time()
     wait = min(MAX_WAIT_SEC, 3600 - (now % 3600) + 30)
@@ -75,7 +106,7 @@ def _unsplash_search(q):
     if not h:
         return []
     cache = _load_cache()
-    if q in cache:
+    if q in cache and all("description" in item for item in cache[q]):
         return cache[q]
     if _quota["remaining"] is not None and _quota["remaining"] < MIN_QUOTA:
         if not _wait_for_quota():
@@ -92,9 +123,17 @@ def _unsplash_search(q):
             return _unsplash_search(q)
         return []
     r.raise_for_status()
-    results = [{"id": p["id"], "raw": p["urls"]["raw"], "regular": p["urls"]["regular"],
-                "dl": p["links"].get("download_location"),
-                "by": p["user"]["name"]} for p in r.json().get("results", [])]
+    results = [{
+        "id": p["id"],
+        "raw": p["urls"]["raw"],
+        "regular": p["urls"]["regular"],
+        "dl": p["links"].get("download_location"),
+        "by": p["user"]["name"],
+        "description": " ".join(
+            [p.get("alt_description") or "", p.get("description") or ""] +
+            [tag.get("title", "") for tag in p.get("tags", [])]
+        ),
+    } for p in r.json().get("results", [])]
     cache[q] = results
     _save_cache(cache)
     return results
@@ -102,7 +141,7 @@ def _unsplash_search(q):
 
 def _unsplash_photo(q, used, dest):
     for p in _unsplash_search(q):
-        if ("u", p["id"]) in used:
+        if ("u", p["id"]) in used or not _is_relevant(q, p.get("description", "")):
             continue
         used.add(("u", p["id"]))
         # imgix params: exact 9:16 crop at 1080x1920, so Remotion gets a sharp, ready frame
@@ -114,6 +153,76 @@ def _unsplash_photo(q, used, dest):
                 requests.get(p["dl"], headers=_unsplash_headers(), timeout=10)
             except Exception:
                 pass
+        return path
+    return None
+
+
+# ---------------------------------------------------------------- Wikimedia Commons (no API key)
+
+def _wikimedia_search(q):
+    """Find cached public-domain/CC0 image results from Wikimedia Commons."""
+    cache = _load_cache(WIKIMEDIA_CACHE)
+    if cache.get(q):
+        return cache[q]
+    r = requests.get(
+        WIKIMEDIA, headers=WIKIMEDIA_HEADERS, timeout=30,
+        params={
+            "action": "query",
+            "format": "json",
+            "formatversion": 2,
+            "generator": "search",
+            "gsrnamespace": 6,
+            "gsrsearch": f"filetype:bitmap {q}",
+            "gsrlimit": 10,
+            "prop": "imageinfo",
+            "iiprop": "url|mime|extmetadata",
+            "iiurlwidth": 1080,
+        },
+    )
+    r.raise_for_status()
+    pages = r.json().get("query", {}).get("pages", [])
+    results = []
+    for page in pages:
+        info = (page.get("imageinfo") or [{}])[0]
+        metadata = info.get("extmetadata", {})
+        license_name = metadata.get("LicenseShortName", {}).get("value", "")
+        normalized_license = license_name.casefold()
+        if "cc0" not in normalized_license and "public domain" not in normalized_license:
+            continue
+        mime = info.get("mime", "")
+        extension = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+        }.get(mime)
+        image_url = info.get("thumburl") or info.get("url")
+        if not extension or not image_url:
+            continue
+        results.append({
+            "id": page.get("pageid"),
+            "url": image_url,
+            "extension": extension,
+            "title": page.get("title", ""),
+            "description": metadata.get("ImageDescription", {}).get("value", ""),
+            "source": info.get("descriptionurl", ""),
+            "license": license_name,
+        })
+    if results:
+        cache[q] = results
+        _save_cache(cache, WIKIMEDIA_CACHE)
+    return results
+
+
+def _wikimedia_photo(q, used, dest):
+    for photo in _wikimedia_search(q):
+        if not _is_relevant(q, f"{photo.get('title', '')} {photo.get('description', '')}"):
+            continue
+        image_id = ("w", photo["id"])
+        if image_id in used:
+            continue
+        path = _download(photo["url"], dest.with_suffix(photo["extension"]),
+                         headers=WIKIMEDIA_HEADERS)
+        used.add(image_id)
         return path
     return None
 
@@ -136,6 +245,8 @@ def _pexels_video(q, used, dest):
     for v in r.json().get("videos", []):
         if ("pv", v["id"]) in used or v.get("duration", 0) > MAX_CLIP_SEC:
             continue
+        if not _is_relevant(q, v.get("url", "")):
+            continue
         files = [f for f in v.get("video_files", [])
                  if f.get("file_type") == "video/mp4" and (f.get("height") or 0) >= 1280]
         if not files:
@@ -151,50 +262,25 @@ def _pexels_video(q, used, dest):
 def fetch_shots(keywords, dest_dir):
     """Return one UNIQUE local media path per keyword, in order.
 
-    Each beat gets a different photo — no repeats within a video.
-    Fallback ladder per beat:
-      1. Original query
-      2. Last word of the query (broader)
-      3. First word of the query (broader)
-      4. Synonym queries derived from the original
-      5. Random India-tech sub-topic (not always the same generic fallback)
-    If nothing found → None → renderer shows a designed poster (intentional, not lazy).
+    Each beat gets a different photo or clip whose indexed description overlaps the
+    requested subject. If no relevant footage is available, the renderer uses a designed
+    information card instead of unrelated stock.
     """
     dest_dir = pathlib.Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     used, paths = set(), []
 
-    # Different India-tech fallbacks so we don't get the same stock image every time
-    INDIA_FALLBACKS = [
-        "india technology smartphone",
-        "indian student laptop",
-        "india city tech",
-        "coding india",
-        "indian startup office",
-        "mobile payment india",
-        "india digital future",
-        "tech india young",
-    ]
-
     for i, q in enumerate(keywords):
         dest = dest_dir / str(i)
-        words = q.split()
+        # Preserve the subject in every retry. A generic stock image is worse than
+        # a designed poster that visibly carries the spoken line.
         ladder = [q]
-        if len(words) > 1:
-            ladder.append(words[-1])          # last word (usually the subject)
-            ladder.append(words[0])           # first word (usually the action)
-        # India-specific version of the query
-        if "india" not in q.lower():
-            ladder.append(q + " india")
-        # Rotate through the fallback pool so consecutive "nothing found" beats
-        # each get a different generic image instead of all becoming the same poster
-        ladder.append(INDIA_FALLBACKS[i % len(INDIA_FALLBACKS)])
-        # One more unique fallback just for this beat index
-        ladder.append(INDIA_FALLBACKS[(i + 3) % len(INDIA_FALLBACKS)])
+        if q.strip() and "india" not in q.casefold():
+            ladder.append(f"{q} India")
 
         got = None
         for query in ladder:
-            for fn in (_unsplash_photo, _pexels_video):
+            for fn in (_unsplash_photo, _wikimedia_photo, _pexels_video):
                 try:
                     got = fn(query, used, dest)
                 except Exception as e:

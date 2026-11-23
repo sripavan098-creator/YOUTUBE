@@ -72,7 +72,6 @@ CFG = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 # Angle generation costs one LLM call per story, so generate for a wider pool than we
 # need: skipped or failed stories must not leave a channel short of its 4 videos.
 ANGLE_POOL = 4
-HOOK_MAX_SEC = 3.4  # spoken hook must end by here (3 s window + TTS lead-in)
 
 
 def _ig_slots(day, count, start_hour=12, end_hour=21):
@@ -109,9 +108,10 @@ def _assign(picked, channels):
         audience = channels[ch]["audience"]
         def fit(item):
             story, _ = item
+            relevance = story.get("channel_scores", {}).get(ch, 0)
             if audience == "south_india":
-                return (story.get("fits_south", False), story["score"])
-            return (story.get("fits_india", False), story["score"])
+                return (story.get("fits_south", False), relevance, story["score"])
+            return (story.get("fits_india", False), relevance, story["score"])
         for story, angles in sorted(picked, key=fit, reverse=True):
             if len(assigned[ch]) >= per:
                 break
@@ -170,7 +170,7 @@ def morning():
     langs = [c["lang"] for c in channels.values()]
 
     trend_items = trends.fetch_all(CFG) if CFG.get("trends", True) else []
-    fresh = [s for s in sources.top_stories(20, trend_items=trend_items)
+    fresh = [s for s in sources.top_stories(20, trend_items=trend_items, channels=channels)
              if not any(db.seen(ch, s["url"]) for ch in channels)
              and not all(_repeats_recent(ch, s) for ch in channels)]
     if not fresh:
@@ -210,13 +210,10 @@ def morning():
             angle = _angle_for(channel, channels, chosen, all_angles[story["url"]],
                                shared=takes[story["url"]] > 1)
             sid = db.add_story(day, channel, story["url"], story["title"], story["body"])
-            layout = scripts.pick_layout(recent, CFG["layouts"])
-            recent.append(layout)
             try:
                 # Stage 2: write the picked angle natively for THIS channel, then voice it.
-                # The spoken hook must land inside ~3 s, the window in which people decide
-                # to swipe. TTS length can only be known after synthesis, so if the hook runs
-                # long the script is rewritten once with that exact measurement.
+                # The spoken hook must land within 2.5 s. TTS length can only be known after
+                # synthesis, so an overlong hook is rewritten once using its measured length.
                 (ROOT / "out").mkdir(exist_ok=True)
                 raw_mp3 = ROOT / "out" / f"{sid}_{channel}.raw.mp3"
                 mp3 = ROOT / "out" / f"{sid}_{channel}.mp3"
@@ -233,14 +230,20 @@ def morning():
                         script["beats"], lcfg, ROOT / "out" / f"vo_{sid}_{channel}", raw_mp3)
                     wj.write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
                     hook_s = beats[0][1] - _gap_after_hook(script)
-                    if hook_s <= HOOK_MAX_SEC or attempt == 1:
-                        if hook_s > HOOK_MAX_SEC:
-                            print(f"  hook still {hook_s:.1f}s after rewrite; keeping it")
+                    if hook_s <= scripts.HOOK_MAX_SECONDS:
                         break
-                    note = (f"Your first line took {hook_s:.1f} seconds to speak. It must be "
-                            f"under 3. Rewrite the whole script with a hook of at most 6 short "
-                            f"words that states the stake immediately.")
+                    if attempt == 1:
+                        raise RuntimeError(
+                            f"hook is {hook_s:.2f}s after rewrite "
+                            f"(maximum {scripts.HOOK_MAX_SECONDS}s)"
+                        )
+                    note = (f"Your first line took {hook_s:.2f} seconds to speak. Rewrite "
+                            f"the script with a hook of at most {scripts.HOOK_MAX_WORDS} "
+                            f"short words that fits within {scripts.HOOK_MAX_SECONDS} seconds.")
                     print(f"  hook {hook_s:.1f}s too slow, rewriting once")
+                layout = scripts.pick_layout(recent, CFG["layouts"],
+                                              preferred=script.get("story_format"))
+                recent.append(layout)
                 shots = visuals.fetch_shots(script["shots"], ROOT / "out" / f"shots_{sid}_{channel}")
                 starts = [s for s, _ in beats]
                 cues = audio.default_cues(starts, [b["role"] for b in script["beats"]])
@@ -259,7 +262,9 @@ def morning():
                                 "description": script.get("description") or script["script"].split(".")[0],
                                 "hashtags": script["hashtags"], "tags": script.get("tags", []),
                                 "search_terms": script.get("search_terms", []),
-                                "archetype": archetype}, ensure_ascii=False),
+                                "archetype": archetype,
+                                "story_format": script.get("story_format", "explainer")},
+                       ensure_ascii=False),
                     encoding="utf-8")
                 try:
                     vid_id, slot, privacy = publish_yt.upload(

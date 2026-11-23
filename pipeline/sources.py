@@ -135,7 +135,19 @@ def _fetch_body(url, fallback):
         return fallback
 
 
-def top_stories(n=20, trend_items=None):
+def _channel_scores(text, channels):
+    blob = text.casefold()
+    scores = {}
+    for channel, config in (channels or {}).items():
+        hits = sum(
+            1 for term in config.get("focus_terms", [])
+            if term and term.casefold() in blob
+        )
+        scores[channel] = min(8, hits * 2)
+    return scores
+
+
+def top_stories(n=20, trend_items=None, channels=None):
     trend_items = trend_items or []
     items, seen_urls = [], set()
     rejected = 0
@@ -163,11 +175,14 @@ def top_stories(n=20, trend_items=None):
             blob = (title + " " + summary).lower()
             hits = gtrends.matches(blob, trend_items)
             south_trend = any(g in ("IN-AP", "IN-TG") for h in hits for g in h["geos"])
+            channel_scores = _channel_scores(blob, channels)
             items.append({
                 "url": url,
                 "title": title,
                 "summary": summary,
-                "score": tech_score + gtrends.boost(hits),
+                "score": tech_score + gtrends.boost(hits) +
+                         max(channel_scores.values(), default=0),
+                "channel_scores": channel_scores,
                 "fits_india": any(k in blob for k in INDIA_KW),
                 "fits_south": any(k in blob for k in SOUTH_KW) or south_trend,
                 "trend_hits": [h["term"] for h in hits],
@@ -188,9 +203,12 @@ def top_stories(n=20, trend_items=None):
         if n0["url"] in seen_urls:
             continue
         seen_urls.add(n0["url"])
+        channel_scores = _channel_scores(trend_title + " " + trend_news, channels)
         items.append({
             "url": n0["url"], "title": n0["title"] or it["term"], "summary": n0["title"],
-            "score": tech_score + gtrends.boost([it]) + 2,
+            "score": tech_score + gtrends.boost([it]) + 2 +
+                     max(channel_scores.values(), default=0),
+            "channel_scores": channel_scores,
             "fits_india": True,
             "fits_south": any(g in ("IN-AP", "IN-TG") for g in it["geos"]),
             "trend_hits": [it["term"]],

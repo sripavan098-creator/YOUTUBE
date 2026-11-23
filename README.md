@@ -44,19 +44,23 @@ clip per spoken line, hard cuts with punch-in and whoosh, word-pop captions with
 colour, a 2-second hook card, loudness-normalised voice. Details and the bug list are in
 `REVIEW.md`. Optional: put royalty-free tracks in `assets/music/` for a ducked music bed.
 
-## v3.1: trends, pure-language scripts, Unsplash-only footage
+## v3.1: trends, pure-language scripts, stock-photo footage
 - **Google Trends** (`pipeline/trends.py`): stories that match what India (and AP/Telangana for
   the Telugu channel) is searching right now get a score boost, and trending tech searches can
   become stories themselves. It needs no API key; if Google is unreachable the pipeline runs
   without the boost. Turn off with `trends: false` in `config.yaml`.
 - **Pure Telugu / Hindi**: the writer prompt asks for everyday spoken language in the native
   script, and the validator rejects any line containing Latin letters.
-- **3-second hook**: the first spoken line must be 8 words or fewer, and after TTS its real
-  length is measured; if it runs past 3.4 s the script is rewritten once with that number.
-- **Unsplash only**: one portrait photo per spoken line, 9:16 crop. Demo apps are limited to
-  50 requests/hour; searches are cached in `out/unsplash_cache.json` and the fetcher waits for
-  the next hour when the quota runs out (`UNSPLASH_WAIT=0` to skip waiting). Applying for
-  Production access in the Unsplash dashboard lifts the limit.
+- **2.5-second hook**: the prompt and validator share a six-word maximum, and the spoken
+  hook is measured after TTS. A script still over 2.5 seconds after one rewrite is rejected.
+- **Photo sources**: one portrait photo per spoken line, 9:16 crop. Unsplash searches are
+  cached in `out/unsplash_cache.json`; its demo quota is 50 requests/hour. When quota is low,
+  Wikimedia Commons is used as a no-key fallback, restricted to CC0/public-domain images
+  and cached in `out/wikimedia_cache.json`. Pexels video search is an additional optional
+  fallback when `PEXELS_API_KEY` is configured. Results are filtered against their indexed
+  descriptions; if nothing relevant is found, the renderer displays a card with the spoken
+  line instead of unrelated stock. Set `UNSPLASH_WAIT=1` to wait for the next Unsplash quota
+  window instead of switching sources.
 - `upload_batch.py` writes `<story>_<channel>.uploaded.json` and skips renders that have one.
 
 ## What changed from v1
@@ -81,12 +85,13 @@ colour, a 2-second hook card, loudness-normalised voice. Details and the bug lis
 - **YouTube quota** is 10,000 units/day, but `videos.insert` has its own bucket of about
   100 uploads/day. 8 Shorts + 2 long-form/day is far inside it.
 - **Untested against live services**: Instagram publish and the Groq/Gemini calls are
-  not exercised by anything in this repo. YouTube upload and the Unsplash fetch have
+  not exercised by anything in this repo. YouTube upload and stock-media fetches have
   run in production.
 
 ## Verification
 
-There is no committed test suite. Each run is verified by doing the real thing:
+Run the automated unit tests with `python -m unittest discover -s tests`. Each pipeline run
+is also verified by doing the real thing:
 
 - `python -m pipeline.doctor` - preflight: config, env keys, OAuth tokens, ffmpeg,
   node/esbuild, Telegram reachability
@@ -104,7 +109,7 @@ There is no committed test suite. Each run is verified by doing the real thing:
 | `pipeline/scripts.py` | 3 angles per story, Groq then Gemini, strict validation |
 | `pipeline/review.py` | Telegram angle picker (`1A,2C`, `skip 4`, `auto`) |
 | `pipeline/voice.py` | edge-tts with word timings |
-| `pipeline/visuals.py` | Unsplash portrait images |
+| `pipeline/visuals.py` | Unsplash and Wikimedia Commons photos; optional Pexels videos |
 | `pipeline/render.py` | Remotion render, layout to composition mapping |
 | `pipeline/publish_yt.py` | Upload, slot scheduling, privacy gate, promote |
 | `pipeline/publish_ig.py` | Reels publish via Graph API |
@@ -118,6 +123,7 @@ There is no committed test suite. Each run is verified by doing the real thing:
 - **Voice**: every beat is voiced separately with its own mood (shock/urgent/curious/calm/serious), silence trimmed using exact word timings, deliberate pauses before re-hooks and payoffs. Beat cut times are exact.
 - **Sound**: broadcast voice chain (80 Hz HPF, +2 dB warmth, +2.5 dB presence, compression, -14 LUFS); procedural impact / riser / whoosh / pop placed by beat role; generated music bed that ducks under speech. Drop files in `assets/sfx/<kind>.wav` or `assets/music/` to override.
 - **Screen**: flash cuts, re-framing every 2.6 s, impact shake, grade + vignette + grain, hook slam with RGB glitch, kinetic keyword slam, stat cards, mid-video follow nudge, poster scenes when no photo is found. Telugu/Devanagari fonts are bundled (`npm install` in `remotion/`).
-- **Content/SEO**: hook archetypes (stake, secret, number, question, contrarian, countdown), director fields per beat, critic polish pass, real search phrases (native + English) into tags and description, topic de-duplication over 14 days.
-- **Learning**: `python -m pipeline.main --learn` (also nightly 05:30) pulls view stats and steers archetype choice. Only effective once videos are public.
+- **Content/SEO**: consistent script limits (6-9 beats, 60-95 words, 6-word hook), a source-backed claim with three supporting facts, topic-specific CTAs, channel editorial identities, hook archetypes, search phrases, and topic de-duplication.
+- **Visual treatment**: the script's story format selects a matching explainer, list, versus, or timeline treatment while avoiding recent repeats.
+- **Learning**: `python -m pipeline.main --learn` (also nightly 05:30) combines views with average view percentage, engaged views, and subscribers gained when YouTube Analytics access is available. Re-run `python -m pipeline.auth <hi|te>` to authorize the read-only Analytics scope. YouTube's viewed-vs-swiped metric is not currently included in this API report.
 - Rollback: `git revert` to commit abbba14 (pre-v4).

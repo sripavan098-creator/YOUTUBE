@@ -5,6 +5,7 @@ export type Scene = {
   kind: 'video' | 'image' | 'poster';
   start: number; // seconds
   end: number; // seconds
+  posterText?: string;
   // v4 director fields, all optional
   role?: 'hook' | 'fact' | 'rehook' | 'payoff' | 'loop';
   slam?: string; // one word thrown huge on screen

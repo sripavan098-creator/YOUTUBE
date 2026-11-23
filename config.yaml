@@ -19,6 +19,8 @@ channels:
     lang: hi
     trends_geo: ["IN"]
     audience: india
+    editorial_identity: "Hindi-first, India-wide practical tech coverage focused on consumer impact, digital services, and effects on money or work."
+    focus_terms: ["smartphone", "digital payment", "consumer app", "internet plan", "Android", "AI jobs", "Indian startup", "personal data", "online scam", "UPI"]
     yt_start: "18:00"
     cta: "गाइड का लिंक बायो में है। रोज़ फ़ॉलो करें"
     nudge: "कल का पार्ट मिस मत करना, फ़ॉलो करें"
@@ -34,6 +36,8 @@ channels:
     lang: te
     trends_geo: ["IN-AP", "IN-TG", "IN"]
     audience: south_india
+    editorial_identity: "Telugu tech reporting for Andhra Pradesh and Telangana, especially local technology, startups, jobs, digital services, and consumer impact."
+    focus_terms: ["Hyderabad", "Andhra Pradesh", "Telangana", "Telugu", "South India", "Indian startup", "local jobs", "digital payment", "smartphone", "UPI"]
     yt_start: "17:30"
     cta: "గైడ్ లింక్ బయోలో ఉంది. రోజూ ఫాలో అవ్వండి"
     nudge: "రేపటి పార్ట్ మిస్ అవ్వకండి, ఫాలో చేయండి"

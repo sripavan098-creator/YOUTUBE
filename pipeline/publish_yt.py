@@ -11,13 +11,22 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 IST = ZoneInfo("Asia/Kolkata")
 
 
-def _service(channel):
+def _credentials(channel):
     tok = json.loads((ROOT / "tokens" / f"yt_{channel}.json").read_text(encoding="utf-8"))
-    creds = Credentials(
+    return Credentials(
         None, refresh_token=tok["refresh_token"], client_id=tok["client_id"],
         client_secret=tok["client_secret"], token_uri="https://oauth2.googleapis.com/token",
         scopes=tok.get("scopes"))
+
+
+def _service(channel):
+    creds = _credentials(channel)
     return build("youtube", "v3", credentials=creds, cache_discovery=False)
+
+
+def _analytics_service(channel):
+    creds = _credentials(channel)
+    return build("youtubeAnalytics", "v2", credentials=creds, cache_discovery=False)
 
 
 def _slot(lcfg, step_min, index):

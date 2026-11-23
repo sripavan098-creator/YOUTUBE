@@ -127,7 +127,17 @@ def set_privacy(sid, privacy):
 # ---------------------------------------------------------------- v4: learning + dedupe
 DB.execute("CREATE TABLE IF NOT EXISTS perf(sid INTEGER PRIMARY KEY, channel TEXT, archetype TEXT, "
            "layout TEXT, views INT DEFAULT 0, likes INT DEFAULT 0, comments INT DEFAULT 0, "
-           "checked_at TEXT)")
+           "checked_at TEXT, engaged_views INT, average_view_percentage REAL, "
+           "average_view_duration REAL, subscribers_gained INT)")
+_perf_columns = {row[1] for row in DB.execute("PRAGMA table_info(perf)")}
+for _name, _type in (
+    ("engaged_views", "INT"),
+    ("average_view_percentage", "REAL"),
+    ("average_view_duration", "REAL"),
+    ("subscribers_gained", "INT"),
+):
+    if _name not in _perf_columns:
+        DB.execute(f"ALTER TABLE perf ADD COLUMN {_name} {_type}")
 try:
     DB.execute("ALTER TABLE stories ADD COLUMN archetype TEXT")
 except Exception:
@@ -153,18 +163,36 @@ def uploaded_stories(min_age_days=1):
     import datetime
     until = (datetime.date.today() - datetime.timedelta(days=min_age_days)).isoformat()
     return DB.execute(
-        "SELECT id, channel, yt_video_id, archetype, layout FROM stories "
+        "SELECT id, channel, yt_video_id, archetype, layout, day FROM stories "
         "WHERE yt_video_id IS NOT NULL AND day<=? AND status='done'", (until,)).fetchall()
 
 
-def save_perf(sid, channel, archetype, layout, views, likes, comments):
+def save_perf(sid, channel, archetype, layout, views, likes, comments, engaged_views=None,
+              average_view_percentage=None, average_view_duration=None,
+              subscribers_gained=None):
     import datetime
-    DB.execute("INSERT OR REPLACE INTO perf VALUES(?,?,?,?,?,?,?,?)",
-               (sid, channel, archetype, layout, views, likes, comments,
-                datetime.datetime.now().isoformat(timespec="seconds")))
+    DB.execute(
+        "INSERT INTO perf(sid,channel,archetype,layout,views,likes,comments,"
+        "checked_at,engaged_views,average_view_percentage,average_view_duration,"
+        "subscribers_gained) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(sid) DO UPDATE SET channel=excluded.channel,"
+        "archetype=excluded.archetype,layout=excluded.layout,views=excluded.views,"
+        "likes=excluded.likes,comments=excluded.comments,checked_at=excluded.checked_at,"
+        "engaged_views=COALESCE(excluded.engaged_views,perf.engaged_views),"
+        "average_view_percentage=COALESCE(excluded.average_view_percentage,"
+        "perf.average_view_percentage),"
+        "average_view_duration=COALESCE(excluded.average_view_duration,"
+        "perf.average_view_duration),"
+        "subscribers_gained=COALESCE(excluded.subscribers_gained,perf.subscribers_gained)",
+        (sid, channel, archetype, layout, views, likes, comments,
+         datetime.datetime.now().isoformat(timespec="seconds"), engaged_views,
+         average_view_percentage, average_view_duration, subscribers_gained))
     DB.commit()
 
 
 def perf_rows(channel):
-    return DB.execute("SELECT archetype, layout, views FROM perf WHERE channel=?",
-                      (channel,)).fetchall()
+    return DB.execute(
+        "SELECT archetype, layout, views, likes, comments, engaged_views, "
+        "average_view_percentage, average_view_duration, subscribers_gained "
+        "FROM perf WHERE channel=?",
+        (channel,)).fetchall()
