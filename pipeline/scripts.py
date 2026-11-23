@@ -499,33 +499,50 @@ def _seo_tags(d, lcfg):
 
 
 def _finish(d, lcfg):
-    """Derive the fields the rest of the pipeline reads."""
-    for b in d["beats"]:
-        b["line"] = b["line"].strip()
-        if b["line"][-1] not in ".?!।…":
-            b["line"] += "."  # terminal punctuation gives the TTS a natural pause per beat
-    lines = [b["line"] for b in d["beats"]]
-    d["script"] = " ".join(lines)
-    d["shots"] = [b["shot"].strip() for b in d["beats"]]
-    # Split on whitespace, not \w: Python's \w breaks Devanagari/Telugu words at vowel signs.
-    strip = ".,!?।…\"'“”‘’():;-"
+    “””Derive the fields the rest of the pipeline reads.”””
+    for b in d[“beats”]:
+        b[“line”] = b[“line”].strip()
+        if b[“line”][-1] not in “.?!।…”:
+            b[“line”] += “.”  # terminal punctuation gives the TTS a natural pause per beat
+    lines = [b[“line”] for b in d[“beats”]]
+    d[“script”] = “ “.join(lines)
+    d[“shots”] = [b[“shot”].strip() for b in d[“beats”]]
+    # Split on whitespace, not \w: Python’s \w breaks Devanagari/Telugu words at vowel signs.
+    strip = “.,!?।…\”’””’’():;-”
     words = set(w.strip(strip) for l in lines for w in l.split())
-    d["emphasis"] = [w.strip(strip) for w in d.get("emphasis", [])
+    d[“emphasis”] = [w.strip(strip) for w in d.get(“emphasis”, [])
                      if isinstance(w, str) and w.strip(strip) in words][:8]
     tags = []
-    for t in d.get("hashtags", []):
+    for t in d.get(“hashtags”, []):
         t = str(t).strip()
-        if t and not t.startswith("#"):
-            t = "#" + t.replace(" ", "")
+        if t and not t.startswith(“#”):
+            t = “#” + t.replace(“ “, “”)
         if t and t not in tags:
             tags.append(t)
-    if "#shorts" not in [t.lower() for t in tags]:
-        tags.insert(0, "#shorts")
-    d["hashtags"] = tags[:8]
+    if “#shorts” not in [t.lower() for t in tags]:
+        tags.insert(0, “#shorts”)
+    d[“hashtags”] = tags[:8]
     _direct(d)
-    d["tags"] = _seo_tags(d, lcfg)
-    d.setdefault("description", d["title"])
-    d.setdefault("ig_caption", d["title"] + "\n\n" + " ".join(d["hashtags"][:5]))
+    d[“tags”] = _seo_tags(d, lcfg)
+    if d.get(“story_format”) not in STORY_FORMATS:
+        d[“story_format”] = “explainer”
+    d.setdefault(“cta_text”, lcfg.get(“cta”, “”))
+    d.setdefault(“cta_screen”, d[“cta_text”])
+
+    # Research: append 2-3 niche hashtags INSIDE the YT title — they’re clickable
+    # and boost discovery. Keep base title ≤60 chars; hashtags go after a space.
+    base_title = str(d.get(“title”, “”)).strip()
+    yt_hashtags = lcfg.get(“yt_hashtags”, “”)  # e.g. “#HindiTech #AITools”
+    if yt_hashtags and len(base_title) + 1 + len(yt_hashtags) <= 100:
+        d[“title_with_hashtags”] = f”{base_title} {yt_hashtags}”
+    else:
+        d[“title_with_hashtags”] = base_title
+
+    d.setdefault(“description”, d[“title”])
+    # Instagram caption: hook line + hashtags including channel-specific ones
+    ig_hashtags = lcfg.get(“ig_hashtags”, “ “.join(d[“hashtags”][:5]))
+    d.setdefault(“ig_caption”,
+                 d[“title”] + “\n\n” + “\n”.join(lines[:2]) + “\n\n” + ig_hashtags)
     return d
 
 

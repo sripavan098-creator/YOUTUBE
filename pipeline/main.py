@@ -74,6 +74,11 @@ CFG = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 ANGLE_POOL = 4
 HOOK_MAX_SEC = 3.4  # spoken hook must end by here (3 s window + TTS lead-in)
 
+# With shorts_per_day: 2, morning() runs at yt_start (slot_offset=0) and
+# evening() runs at yt_start_2 (slot_offset=stories_per_channel) so the
+# publish_yt._slot() index math routes morning videos to AM and evening to PM.
+_SLOT_OFFSET_EVENING = CFG.get("stories_per_channel", 4)
+
 
 def _ig_slots(day, count, start_hour=12, end_hour=21):
     """Spread posts across the day, dropping slots that have already passed so a
@@ -164,7 +169,23 @@ def _repeats_recent(channel, story, threshold=0.6):
     return False
 
 
-def morning():
+def morning(slot_offset: int = 0):
+    """Run one production batch per channel.
+
+    publish_yt._slot() decides the posting time by parity of the index it
+    receives:  even index → yt_start (AM),  odd index → yt_start_2 (PM).
+
+    slot_offset=0 → morning run: upload indices 0,1,2,3 (day 0 AM/PM/day1 AM/PM)
+    slot_offset=1 → evening run: upload indices 1,2,3,4 — but we really want
+                   ALL evening videos at PM.  The simplest approach: pass
+                   slot_offset=1 so the first story gets index 1 (odd → PM)
+                   and subsequent stories get 2,3,4 (AM next day, PM next day…).
+
+    For the common case (stories_per_channel=4, shorts_per_day=2) this means:
+      Morning  (slot_offset=0): indices 0,1,2,3 → AM today, PM today, AM+1, PM+1
+      Evening  (slot_offset=1): indices 1,2,3,4 → PM today, AM+1, PM+1, AM+2
+    That spreads the two batches correctly across AM/PM slots on the same day.
+    """
     day = datetime.date.today().isoformat()
     channels = CFG["channels"]
     langs = [c["lang"] for c in channels.values()]
@@ -263,7 +284,8 @@ def morning():
                     encoding="utf-8")
                 try:
                     vid_id, slot, privacy = publish_yt.upload(
-                        channel, lcfg, CFG["yt_step_min"], i, _clean_dict(script), video,
+                        channel, lcfg, CFG["yt_step_min"], slot_offset + i,
+                        _clean_dict(script), video,
                         story["url"], CFG.get("yt_public_after_audit", False))
                     print(f"YT {channel} {vid_id} {privacy} {slot}")
                     # upload_batch.py checks this marker so it never uploads the same render twice
@@ -306,6 +328,20 @@ def _queue_ig(day, channels):
     print(f"IG: queued {min(len(interleaved), len(slots))} posts")
 
 
+def evening():
+    """Second daily batch — targets the PM posting slot (yt_start_2).
+
+    Uses slot_offset=1 so publish_yt._slot() receives odd indices → yt_start_2.
+    Sources are fetched fresh so the evening batch picks up stories published
+    after the morning run (breaking news, afternoon blog posts, etc.).
+    shorts_per_day must be >= 2 in config.yaml for this to do anything useful.
+    """
+    if CFG.get("shorts_per_day", 1) < 2:
+        print("shorts_per_day < 2 — skipping evening run")
+        return
+    morning(slot_offset=1)
+
+
 def pump_ig():
     now = datetime.datetime.now().isoformat(timespec="seconds")
     for row_id, sid, channel, path, caption in db.due_ig(now):
@@ -321,6 +357,8 @@ def pump_ig():
 def main():
     if "--now" in sys.argv:
         morning()
+    elif "--evening" in sys.argv:
+        evening()
     elif "--learn" in sys.argv:
         learn.refresh_stats()
     elif "--ig" in sys.argv:
@@ -331,13 +369,22 @@ def main():
         from pipeline import replay
         replay.replay_all()
     else:
+        # Morning batch: 06:00 IST (before yt_start 08:30 — needs ~2h to render)
+        # Evening batch: 15:00 IST (before yt_start_2 19:00–19:30 — needs ~4h buffer)
+        # Both channels share the same render time; yt_start_2 per channel is used
+        # to pick the exact posting slot inside publish_yt._slot().
         schedule.every().day.at("05:30").do(learn.refresh_stats)
         schedule.every().day.at("06:00").do(morning)
+        if CFG.get("shorts_per_day", 1) >= 2:
+            schedule.every().day.at("15:00").do(evening)
         schedule.every().tuesday.at("10:00").do(longform.build_all)
         schedule.every().friday.at("10:00").do(longform.build_all)
         schedule.every(15).minutes.do(pump_ig)
         schedule.every(25).days.at("09:00").do(refresh_ig.main)
-        print("daemon up:", schedule.next_run())
+        schedules = ["06:00 morning"]
+        if CFG.get("shorts_per_day", 1) >= 2:
+            schedules.append("15:00 evening")
+        print(f"daemon up — batches: {', '.join(schedules)} — next: {schedule.next_run()}")
         while True:
             schedule.run_pending()
             time.sleep(30)
