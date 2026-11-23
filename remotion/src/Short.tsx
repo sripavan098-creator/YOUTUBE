@@ -19,7 +19,8 @@ export type Variant = 'explainer' | 'list' | 'versus' | 'timeline';
 
 const HOOK_SECONDS = 2.8;
 const CTA_SECONDS = 2.8;
-const SEG_SECONDS = 2.6; // nothing stays on one framing longer than this
+// Research: change every 2.0–2.4s = highest retention; 2.6s is at the edge.
+const SEG_SECONDS = 2.1; // nothing stays on one framing longer than this
 const ORIGINS = ['50% 38%', '22% 30%', '78% 62%', '50% 74%', '70% 28%', '30% 70%'];
 
 const STROKE = '#000';
@@ -86,7 +87,9 @@ const SceneView = ({ scene, index, p }: { scene: Scene; index: number; p: ShortP
 
   const punch = spring({ frame: local, fps, config: { damping: 14, stiffness: 240, mass: 0.6 } });
   const punchScale = interpolate(punch, [0, 1], [seg === 0 ? 1.18 : 1.1, 1.0]);
-  const drift = interpolate(local, [0, segLen], [1.0, 1.1], { extrapolateRight: 'clamp' });
+  // Payoff scene gets a dramatic slow-push: drift is 20% more over the same time (cinematic hold)
+  const driftAmount = scene.role === 'payoff' ? 1.14 : 1.1;
+  const drift = interpolate(local, [0, segLen], [1.0, driftAmount], { extrapolateRight: 'clamp' });
   const origin = ORIGINS[(index * 2 + seg) % ORIGINS.length];
 
   // impact shake on turns and payoffs
@@ -430,11 +433,19 @@ const VariantChrome = ({ variant, p, scenes }: { variant: Variant; p: ShortProps
 
 export const Short = ({ p, variant }: { p: ShortProps; variant: Variant }) => {
   useFontsReady(p.lang);
+  const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
   const total = durationInFrames / fps;
   const scenes = useMemo(() => sceneList(p, total), [p, total]);
   const chunks = useMemo(() => buildChunks(p.words), [p.words]);
   const nudgeAt = Math.round(total * 0.56 * fps);
+
+  // Loop-back: in the last 0.5s, fade the first scene back in at 25% opacity
+  // so the video "loops" seamlessly on repeat plays — a key retention signal.
+  const loopStart = durationInFrames - Math.round(0.5 * fps);
+  const loopOpacity = frame >= loopStart
+    ? interpolate(frame, [loopStart, durationInFrames - 1], [0, 0.28], { extrapolateRight: 'clamp' })
+    : 0;
 
   return (
     <AbsoluteFill style={{ backgroundColor: '#0E0E12', fontFamily: fontFor(p.lang) }}>
@@ -492,6 +503,13 @@ export const Short = ({ p, variant }: { p: ShortProps; variant: Variant }) => {
       <Sequence from={Math.max(0, durationInFrames - Math.round(CTA_SECONDS * fps))}>
         <Pill text={p.cta} p={p} bottom={330} />
       </Sequence>
+
+      {/* Loop-back: last 0.5s shows first scene ghosting in → seamless on repeat */}
+      {loopOpacity > 0 && scenes[0] && (
+        <AbsoluteFill style={{ opacity: loopOpacity }}>
+          <SceneView scene={scenes[0]} index={0} p={p} />
+        </AbsoluteFill>
+      )}
 
       <Audio src={staticFile(p.audio)} />
     </AbsoluteFill>

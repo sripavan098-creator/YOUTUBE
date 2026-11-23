@@ -86,13 +86,13 @@ def prosody(base_rate, base_pitch, base_volume, mood):
 
 
 def _synth_one(text, voice, rate, pitch, volume, mp3_path, words_path,
-               lang=None, sarvam_voice_id=None):
+               lang=None, sarvam_voice_id=None, role="fact"):
     """Synthesise one beat.
 
     Priority:
       1. Sarvam AI — if SARVAM_API_KEY is set. Natural Indian-language prosody,
-         voice cloning support, correct Telugu/Hindi accent. Pace is derived from
-         Edge TTS rate so the mood system still controls delivery speed.
+         voice cloning support, correct Telugu/Hindi accent. Pace and temperature
+         are derived from the beat's role for natural expressive delivery.
       2. Edge TTS — fallback when Sarvam is unavailable.
 
     When Sarvam is used, word-boundary JSON is estimated from the audio duration
@@ -101,18 +101,23 @@ def _synth_one(text, voice, rate, pitch, volume, mp3_path, words_path,
     """
     # Try Sarvam first
     try:
-        from pipeline.sarvam_voice import synth_sarvam, available as sarvam_ok
+        from pipeline.sarvam_voice import synth_sarvam, available as sarvam_ok, ROLE_SETTINGS
     except ImportError:
         sarvam_ok = lambda: False
+        ROLE_SETTINGS = {}
 
     if sarvam_ok() and lang:
-        # Convert Edge-TTS rate (+14% → 1.14 pace) to Sarvam pace (0.5-2.0)
+        # Role-based pace + temperature (research-validated per beat emotion)
+        role_cfg = ROLE_SETTINGS.get(role, {"pace": 1.10, "temperature": 0.75})
+        # Also factor in the mood's rate adjustment from Edge TTS rate setting
         r_num = int(re.search(r"-?\d+", rate).group()) if re.search(r"-?\d+", rate) else 0
-        pace = round(max(0.6, min(1.8, 1.0 + r_num / 100)), 2)
+        pace = round(max(0.6, min(1.8, role_cfg["pace"] + r_num / 200)), 2)  # blend
+        temperature = role_cfg["temperature"]
         wav_path = str(pathlib.Path(mp3_path).with_suffix(".wav"))
         try:
             dur = synth_sarvam(text, lang, wav_path,
-                               voice_id=sarvam_voice_id, pace=pace)
+                               voice_id=sarvam_voice_id, pace=pace,
+                               temperature=temperature)
             # Convert WAV → MP3 for consistency downstream
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", wav_path,
                             "-c:a", "libmp3lame", "-q:a", "2", mp3_path], check=True)
@@ -196,7 +201,7 @@ def synth_beats(beats, lcfg, workdir, mp3_out):
                                    lcfg.get("volume", "+0%"), mood)
         raw, wj = workdir / f"b{i}.mp3", workdir / f"b{i}.json"
         _synth_one(b["line"], lcfg["voice"], rate, pitch, vol, str(raw), str(wj),
-                   lang=lang, sarvam_voice_id=sarvam_voice_id)
+                   lang=lang, sarvam_voice_id=sarvam_voice_id, role=role)
         w = _json.loads(wj.read_text(encoding="utf-8"))
         # cut to the speech: 30 ms before the first word, 110 ms after the last
         cut0 = max(0.0, w[0]["start"] - 0.03)
