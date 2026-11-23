@@ -18,6 +18,7 @@ from openai import APIStatusError, OpenAI
 
 from pipeline import retention as R
 from pipeline import langfix as L
+from pipeline.provider_keys import gemini_keys, groq_keys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -260,29 +261,61 @@ def _with_retry(fn, attempts=3, base=2.0):
 
 
 def _groq(system, prompt, model, temperature=0.7):
-    c = OpenAI(api_key=os.environ["GROQ_API_KEY"], base_url="https://api.groq.com/openai/v1",
-               timeout=60)
     kwargs = {}
     if "gpt-oss" in model:
         kwargs["extra_body"] = {"reasoning_effort": "medium"}
-    return _with_retry(lambda: c.chat.completions.create(
-        model=model, temperature=temperature, max_tokens=4000,
-        messages=[{"role": "system", "content": system},
-                  {"role": "user", "content": prompt}], **kwargs).choices[0].message.content)
+    keys = groq_keys()
+    if not keys:
+        raise RuntimeError("GROQ_API_KEY is not configured")
+
+    last_error = None
+    for index, key in enumerate(keys):
+        try:
+            c = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1", timeout=60)
+            result = _with_retry(lambda: c.chat.completions.create(
+                model=model, temperature=temperature, max_tokens=4000,
+                messages=[{"role": "system", "content": system},
+                          {"role": "user", "content": prompt}], **kwargs
+            ).choices[0].message.content)
+            if index:
+                print("  Groq backup key succeeded", flush=True)
+            return result
+        except (requests.HTTPError, APIStatusError) as error:
+            last_error = error
+            if index + 1 < len(keys):
+                print(f"  Groq primary key failed ({_status_of(error) or 'error'}), "
+                      "trying backup key...", flush=True)
+                continue
+            raise
+    raise last_error
 
 
-def _gemini(system, prompt, model, temperature=0.7):
+def _gemini(system, prompt, model, temperature=0.7, timeout=60):
     def call():
         r = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+            headers={"x-goog-api-key": key},
             json={"contents": [{"parts": [{"text": system + "\n\n" + prompt}]}],
                   "generationConfig": {"responseMimeType": "application/json",
                                        "temperature": temperature}},
-            timeout=60)
+            timeout=timeout)
         r.raise_for_status()
         return r.json()["candidates"][0]["content"]["parts"][0]["text"]
-    return _with_retry(call)
+
+    keys = gemini_keys()
+    if not keys:
+        raise RuntimeError("GEMINI_API_KEY is not configured")
+    for index, key in enumerate(keys):
+        try:
+            result = _with_retry(call)
+            if index:
+                print("  Gemini backup key succeeded", flush=True)
+            return result
+        except requests.HTTPError as error:
+            if index + 1 == len(keys):
+                raise
+            print(f"  Gemini key {index + 1} failed ({_status_of(error) or 'error'}), "
+                  "trying backup key...", flush=True)
 
 
 def _providers(cfg):
@@ -639,3 +672,24 @@ def pick_layout(used_recently, layouts, preferred=None):
     if preferred in available:
         return preferred
     return random.choice(available or layouts)
+
+
+# === GULU TITLES ===
+from pipeline import titles as _T
+
+_gulu_prev_write = write_script
+def write_script(story, angle, lcfg, cfg, note="", archetype="stake"):
+    d = _gulu_prev_write(story, angle, lcfg, cfg, note=note, archetype=archetype)
+    d, rep = _T.harden(
+        d, lcfg.get("lang", "en"),
+        brand=lcfg.get("brand", ""), handle=lcfg.get("handle", ""),
+        link=cfg.get("bio_link", "") or lcfg.get("bio_link", ""),
+        source_url=story.get("url", ""),
+    )
+    print("  titles hardened: " + str(d["title_len"]) + " chars, fold " + str(d["fold_len"])
+          + (" | " + ", ".join(rep) if rep else ""), flush=True)
+    return d
+
+# === FLOWFIX ===
+from pipeline import flowfix as _FF
+_FF.wrap(__import__(__name__, fromlist=["x"]))

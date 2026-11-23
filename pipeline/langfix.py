@@ -142,8 +142,10 @@ def judge(script, lang, model=None):
     """Native-speaker pass for Telugu and Hindi. Applies fixes only if retention gates pass."""
     if os.getenv("NATIVE_JUDGE", "0") != "1" or lang not in ("te", "hi"):
         return script
-    key = os.environ.get("GEMINI_API_KEY")
-    if not key:
+    from pipeline.provider_keys import gemini_keys
+
+    keys = gemini_keys()
+    if not keys:
         return script
     model = model or os.getenv("VISION_MODEL", "gemini-3.5-flash-lite")
     lines = [beat["line"] for beat in script.get("beats", [])]
@@ -159,18 +161,22 @@ def judge(script, lang, model=None):
     try:
         import requests
 
-        response = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            headers={"x-goog-api-key": key},
-            json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {
-                    "responseMimeType": "application/json",
-                    "temperature": 0.2,
+        response = None
+        for key in keys:
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers={"x-goog-api-key": key},
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "responseMimeType": "application/json",
+                        "temperature": 0.2,
+                    },
                 },
-            },
-            timeout=60,
-        )
+                timeout=60,
+            )
+            if response.status_code == 200:
+                break
         if response.status_code != 200:
             return script
         payload = response.json()["candidates"][0]["content"]["parts"][0]["text"]
@@ -214,28 +220,35 @@ def audio_gate(mp3, script_text, lang):
     """Optional Whisper round-trip for the final rendered voice."""
     if os.getenv("ASR_GATE", "0") != "1":
         return None, None
-    key = os.environ.get("GROQ_API_KEY")
-    if not key:
+    from pipeline.provider_keys import groq_keys
+
+    keys = groq_keys()
+    if not keys:
         return None, None
     try:
         import requests
 
         response = None
         for model in ("whisper-large-v3-turbo", "whisper-large-v3"):
-            with open(mp3, "rb") as audio_file:
-                response = requests.post(
-                    "https://api.groq.com/openai/v1/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {key}"},
-                    files={"file": (pathlib.Path(mp3).name, audio_file, "audio/mpeg")},
-                    data={"model": model, "language": lang, "response_format": "json"},
-                    timeout=120,
-                )
-            if response.status_code == 200:
-                heard = response.json().get("text", "")
-                cer = _cer(script_text, heard)
-                tag = "OK" if cer <= 0.22 else "BAD"
-                print(f"  audio CER {cer:.2f} [{tag}] via {model}", flush=True)
-                return cer, heard
+            for key_index, key in enumerate(keys):
+                with open(mp3, "rb") as audio_file:
+                    response = requests.post(
+                        "https://api.groq.com/openai/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {key}"},
+                        files={"file": (pathlib.Path(mp3).name, audio_file, "audio/mpeg")},
+                        data={"model": model, "language": lang, "response_format": "json"},
+                        timeout=120,
+                    )
+                if response.status_code == 200:
+                    heard = response.json().get("text", "")
+                    cer = _cer(script_text, heard)
+                    tag = "OK" if cer <= 0.22 else "BAD"
+                    if key_index:
+                        print("  Groq backup key succeeded", flush=True)
+                    print(f"  audio CER {cer:.2f} [{tag}] via {model}", flush=True)
+                    return cer, heard
+                if key_index + 1 < len(keys):
+                    print("  Groq ASR key failed, trying backup key...", flush=True)
         print(f"  ASR gate skipped ({response.status_code})", flush=True)
     except Exception as error:
         print(f"  ASR gate skipped ({str(error)[:50]})", flush=True)

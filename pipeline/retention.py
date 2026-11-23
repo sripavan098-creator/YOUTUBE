@@ -275,30 +275,36 @@ def vision_ok(image_path, line, model=None):
     """Optional Gemini relevance check. Fails open when it cannot verify."""
     if os.getenv("VISION_VERIFY", "0") != "1":
         return True
-    key = os.environ.get("GEMINI_API_KEY")
-    if not key:
+    from pipeline.provider_keys import gemini_keys
+
+    keys = gemini_keys()
+    if not keys:
         return True
     model = model or os.getenv("VISION_MODEL", "gemini-3.5-flash-lite")
     try:
         import requests
 
         encoded = base64.b64encode(open(image_path, "rb").read()).decode()
-        response = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            headers={"x-goog-api-key": key},
-            json={
-                "contents": [{"parts": [
-                    {"text": (
-                        "Does this photo clearly illustrate the line below? Answer only "
-                        "YES or NO.\nLINE: " + str(line)
-                    )},
-                    {"inline_data": {"mime_type": "image/jpeg", "data": encoded}},
-                ]}],
-                "generationConfig": {"temperature": 0},
-            },
-            timeout=45,
-        )
-        if response.status_code != 200:
+        response = None
+        for key in keys:
+            response = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers={"x-goog-api-key": key},
+                json={
+                    "contents": [{"parts": [
+                        {"text": (
+                            "Does this photo clearly illustrate the line below? Answer only "
+                            "YES or NO.\nLINE: " + str(line)
+                        )},
+                        {"inline_data": {"mime_type": "image/jpeg", "data": encoded}},
+                    ]}],
+                    "generationConfig": {"temperature": 0},
+                },
+                timeout=45,
+            )
+            if response.status_code == 200:
+                break
+        if response is None or response.status_code != 200:
             return True
         text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip().upper()
         return not text.startswith("NO")

@@ -9,7 +9,6 @@ SARVAM_VOICES = {
 }
 
 # --- Gemini Config (Fallback) ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_VOICES = {"hi": os.getenv("TTS_VOICE_HI", "Charon"), "te": os.getenv("TTS_VOICE_TE", "Charon")}
 GEMINI_STYLE = "energetic, crisp tech-news anchor; fast-paced but clearly articulated"
 
@@ -72,26 +71,35 @@ def _sarvam_tts(text, lang, wav_path):
 
 def _gemini_tts(text, lang, wav_path):
     """Fallback 1: Gemini 3.8 Flash TTS"""
-    if not GEMINI_API_KEY:
+    from pipeline.provider_keys import gemini_keys
+
+    keys = gemini_keys()
+    if not keys:
         raise ValueError("No GEMINI_API_KEY")
     from google import genai
-    client = genai.Client(api_key=GEMINI_API_KEY, http_options={"api_version": "v1beta"})
-    
+
     for model in ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts"]:
-        try:
-            it = client.interactions.create(
-                model=model,
-                input=[{"type": "user_input", "content": [{
-                    "type": "text", "text": text,
-                    "annotations": [{"type": "speech_metadata", "style": GEMINI_STYLE}]}]}],
-                response_format={"type": "audio"},
-                generation_config={"speech_config": [{"voice": GEMINI_VOICES.get(lang, "Charon")}]},
-            )
-            pathlib.Path(wav_path).write_bytes(base64.b64decode(it.output_audio.data))
-            print(f"  ✅ TTS via Gemini ({model} / {GEMINI_VOICES.get(lang)})", flush=True)
-            return
-        except Exception as e:
-            print(f"  ⚠️ Gemini {model} failed: {e}", flush=True)
+        for index, key in enumerate(keys):
+            try:
+                client = genai.Client(
+                    api_key=key, http_options={"api_version": "v1beta"})
+                it = client.interactions.create(
+                    model=model,
+                    input=[{"type": "user_input", "content": [{
+                        "type": "text", "text": text,
+                        "annotations": [{"type": "speech_metadata", "style": GEMINI_STYLE}]}]}],
+                    response_format={"type": "audio"},
+                    generation_config={
+                        "speech_config": [{"voice": GEMINI_VOICES.get(lang, "Charon")}]
+                    },
+                )
+                pathlib.Path(wav_path).write_bytes(base64.b64decode(it.output_audio.data))
+                if index:
+                    print("  Gemini backup key succeeded", flush=True)
+                print(f"  ✅ TTS via Gemini ({model} / {GEMINI_VOICES.get(lang)})", flush=True)
+                return
+            except Exception as e:
+                print(f"  ⚠️ Gemini {model} key {index + 1} failed: {e}", flush=True)
     raise Exception("All Gemini models failed")
 
 def _edge_tts(text, lang, out_path):

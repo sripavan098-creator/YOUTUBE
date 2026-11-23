@@ -10,7 +10,7 @@ layouts, schedules them to YouTube, and queues Reels to Instagram.
 ```bash
 pip install -r requirements.txt
 cd remotion && npm install && npm rebuild esbuild && cd ..
-cp .env.example .env          # fill in the 10 keys
+cp .env.example .env          # fill in the required provider/channel keys
 python -m pipeline.doctor     # lists exactly what is still missing
 python -m pipeline.main --now # one batch: 8 Shorts -> out/
 ```
@@ -23,6 +23,7 @@ python -m pipeline.main --now # one batch: 8 Shorts -> out/
 | `python -m pipeline.main --ig` | Post any Reels whose slot has arrived |
 | `python -m pipeline.main --longform` | Build the weekly long-form for each channel |
 | `python -m pipeline.main --replay` | Promote the private backlog after the API audit clears |
+| `python -m pipeline.main --gallery` | Build a neat browser gallery at `out/index.html` |
 | `python -m pipeline.main` | Daemon: 06:00 daily, long-form Tue/Fri, IG pump every 15 min |
 | `python -m pipeline.doctor` | Preflight checks |
 | `python pipeline/publish_ig.py <video_path> <lang> [caption]` | Queue one Reel through the Make.com webhook |
@@ -64,11 +65,16 @@ colour, a 2-second hook card, loudness-normalised voice. Details and the bug lis
   cached in `out/unsplash_cache.json`; its demo quota is 50 requests/hour. When quota is low,
   Wikimedia Commons is used as a no-key fallback, restricted to CC0/public-domain images
   and cached in `out/wikimedia_cache.json`. Pexels video search is an additional optional
-  fallback when `PEXELS_API_KEY` is configured. Results are filtered against their indexed
-  descriptions; if nothing relevant is found, the renderer displays a card with the spoken
-  line instead of unrelated stock. Set `UNSPLASH_WAIT=1` to wait for the next Unsplash quota
-  window instead of switching sources.
+  fallback when `PEXELS_API_KEY` is configured. Results are relevance-ranked against their
+  indexed descriptions. If no relevant stock is found, the renderer draws a topic icon,
+  the exact English shot keyword, and the spoken line instead of a blank frame or unrelated
+  stock. Set `UNSPLASH_WAIT=1` to wait for the next Unsplash quota window instead of switching
+  sources.
 - `upload_batch.py` writes `<story>_<channel>.uploaded.json` and skips renders that have one.
+
+Set `GROQ_API_KEY` / `GEMINI_API_KEY` as the primary provider credentials and optionally
+set `GROQ_API_KEY_2` / `GEMINI_API_KEY_2` for backup credentials. Provider calls try the
+backup key when the primary key is rate-limited or otherwise rejected.
 
 ## What changed from v1
 

@@ -1,4 +1,7 @@
 import unittest
+from unittest.mock import patch
+import os
+import requests
 
 from pipeline import scripts
 from pipeline import retention
@@ -32,6 +35,78 @@ def valid_script():
 
 
 class ScriptValidationTests(unittest.TestCase):
+    def test_groq_uses_backup_key_after_primary_failure(self):
+        class Completions:
+            def __init__(self, text=None, error=None):
+                self.text = text
+                self.error = error
+
+            def create(self, **kwargs):
+                if self.error:
+                    raise self.error
+                class Choice:
+                    message = type("Message", (), {"content": "backup response"})()
+                class Response:
+                    choices = [Choice()]
+                return Response()
+
+        class Client:
+            def __init__(self, text=None, error=None):
+                self.chat = type("Chat", (), {"completions": Completions(text, error)})()
+
+        response = type("Response", (), {"status_code": 429})()
+        primary_error = requests.HTTPError("rate limited")
+        primary_error.response = response
+
+        with patch.dict(os.environ, {
+            "GROQ_API_KEY": "primary-test-key",
+            "GROQ_API_KEY_2": "backup-test-key",
+        }, clear=True), patch.object(scripts, "_with_retry",
+                                    lambda fn, **kwargs: fn()), patch.object(
+                                        scripts, "OpenAI",
+                                        side_effect=[Client(error=primary_error),
+                                                     Client(text="backup response")]) as openai:
+            result = scripts._groq("system", "prompt", "openai/gpt-oss-120b")
+
+        self.assertEqual(result, "backup response")
+        self.assertEqual(openai.call_count, 2)
+        self.assertEqual(openai.call_args_list[0].kwargs["api_key"], "primary-test-key")
+        self.assertEqual(openai.call_args_list[1].kwargs["api_key"], "backup-test-key")
+
+    def test_gemini_uses_backup_key_after_primary_rate_limit(self):
+        primary = type("Response", (), {
+            "status_code": 429,
+            "raise_for_status": lambda self: (_ for _ in ()).throw(
+                requests.HTTPError("rate limited", response=self)),
+        })()
+        backup = type("Response", (), {
+            "status_code": 200,
+            "raise_for_status": lambda self: None,
+            "json": lambda self: {"candidates": [{"content": {"parts": [
+                {"text": "backup response"}
+            ]}}]},
+        })()
+
+        with patch.dict(os.environ, {
+            "GEMINI_API_KEY": "primary-test-key",
+            "GEMINI_API_KEY_2": "backup-test-key",
+        }, clear=True), patch.object(scripts, "_with_retry",
+                                    lambda fn, **kwargs: fn()), patch.object(
+                                        scripts.requests, "post",
+                                        side_effect=[primary, backup]) as post:
+            result = scripts._gemini("system", "prompt", "test-model")
+
+        self.assertEqual(result, "backup response")
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(
+            post.call_args_list[0].kwargs["headers"]["x-goog-api-key"],
+            "primary-test-key",
+        )
+        self.assertEqual(
+            post.call_args_list[1].kwargs["headers"]["x-goog-api-key"],
+            "backup-test-key",
+        )
+
     def test_retention_rejects_bad_visual_and_missing_number_card(self):
         script = valid_script()
         script["beats"][2]["shot"] = "future market"

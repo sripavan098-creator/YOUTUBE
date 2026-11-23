@@ -1,3 +1,4 @@
+import {GuluShort, calculateGuluMetadata} from './GuluShort';
 import { Composition } from 'remotion';
 import { Comp, CompProps } from './Comp';
 import { ShortExplainer } from './layouts/Explainer';
@@ -57,5 +58,21 @@ export const RemotionRoot = () => (
         durationInFrames: props.items.reduce((a, b) => a + b.frames, 0) || 300,
       })}
     />
-  </>
+
+      <Composition
+        id="GuluShort"
+        component={GuluShort}
+        calculateMetadata={calculateGuluMetadata}
+        durationInFrames={300}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={{
+          lang: "te", brandName: "Tech Muchatlu", color: "#06B6D4", accent: "#FF6B00",
+          headline: "", hook: "", emphasis: [], cta: "", audio: "", audioDuration: 10,
+          words: [], scenes: [], shots: [], handle: "",
+          mascot: {size: 96, opacity: 0.9, show: true, cap: true}, endCard: true,
+        }}
+      />
+</>
 );
