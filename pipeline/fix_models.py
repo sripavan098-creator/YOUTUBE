@@ -34,20 +34,49 @@ def pick(ids, prefs, contains=None):
 
 
 def probe_groq():
-    r = requests.get("https://api.groq.com/openai/v1/models",
-                     headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"},
-                     timeout=30)
-    r.raise_for_status()
+    from pipeline.provider_keys import groq_keys
+
+    keys = groq_keys()
+    if not keys:
+        raise RuntimeError("GROQ_API_KEY is not configured")
+    last_error = None
+    for index, key in enumerate(keys):
+        try:
+            r = requests.get("https://api.groq.com/openai/v1/models",
+                             headers={"Authorization": f"Bearer {key}"},
+                             timeout=30)
+            r.raise_for_status()
+            break
+        except Exception as error:
+            last_error = error
+            if index + 1 < len(groq_keys()):
+                print("  Groq key failed, trying backup key...")
+                continue
+            raise last_error
     ids = [m["id"] for m in r.json().get("data", [])]
     print("GROQ available:", ids)
     return pick(ids, GROQ_PREFS)
 
 
 def probe_gemini():
-    r = requests.get("https://generativelanguage.googleapis.com/v1beta/models",
-                     headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-                     params={"pageSize": 200}, timeout=30)
-    r.raise_for_status()
+    from pipeline.provider_keys import gemini_keys
+
+    keys = gemini_keys()
+    if not keys:
+        raise RuntimeError("GEMINI_API_KEY is not configured")
+    for index, key in enumerate(keys):
+        try:
+            r = requests.get("https://generativelanguage.googleapis.com/v1beta/models",
+                             headers={"x-goog-api-key": key},
+                             params={"pageSize": 200}, timeout=30)
+            r.raise_for_status()
+            if index:
+                print("  Gemini backup key succeeded")
+            break
+        except requests.RequestException:
+            if index + 1 == len(keys):
+                raise
+            print("  Gemini key failed, trying backup key...")
     ids = [m["name"].split("/")[-1] for m in r.json().get("models", [])
            if "generateContent" in m.get("supportedGenerationMethods", [])]
     skip = ("tts", "image", "embedding", "aqa", "imagen", "live", "audio")

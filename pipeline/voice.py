@@ -59,15 +59,15 @@ import wave
 # Wider swings make the voice feel like a person, not a reader.
 # Base rate in config.yaml should be +12% (energetic); moods shift from there.
 MOODS = {
-    "shock":    (+16, +6,  +8),   # fast, high, loud – grabs instantly
-    "urgent":   (+20, +4,  +6),   # fastest – racing against time
-    "excited":  (+14, +8,  +6),   # high energy, natural enthusiasm
-    "curious":  (0,   +3,  0),    # neutral – conversational
-    "calm":     (-8,  -3,  -4),   # deliberate slowdown – feels like a human pause
-    "serious":  (-12, -6,  +3),   # slow, low, louder – payoff lands with weight
+    "shock":    (+10, +2, +4),    # energetic without sounding rushed
+    "urgent":   (+10, +1, +3),
+    "excited":  (+8,  +3, +3),
+    "curious":  (0,   0,  0),
+    "calm":     (-3,  -1, -2),
+    "serious":  (-4,  -2, +2),
 }
 # Silence BEFORE a beat (seconds). The dramatic pause before payoff is free emotion.
-GAP_BEFORE = {"hook": 0.0, "fact": 0.08, "rehook": 0.28, "payoff": 0.42, "loop": 0.22}
+GAP_BEFORE = {"hook": 0.0, "fact": 0.04, "rehook": 0.12, "payoff": 0.18, "loop": 0.08}
 DEFAULT_MOOD = {"hook": "shock", "fact": "curious", "rehook": "urgent",
                 "payoff": "serious", "loop": "curious"}
 
@@ -75,6 +75,10 @@ DEFAULT_MOOD = {"hook": "shock", "fact": "curious", "rehook": "urgent",
 def _num(s, default=0):
     m = re.search(r"-?\d+", str(s))
     return int(m.group()) if m else default
+
+
+def _sarvam_pace(rate):
+    return round(max(0.6, min(1.8, 1.30 + _num(rate) / 100)), 2)
 
 
 def prosody(base_rate, base_pitch, base_volume, mood):
@@ -106,9 +110,8 @@ def _synth_one(text, voice, rate, pitch, volume, mp3_path, words_path,
         sarvam_ok = lambda: False
 
     if sarvam_ok() and lang:
-        # Convert Edge-TTS rate (+14% → 1.14 pace) to Sarvam pace (0.5-2.0)
-        r_num = int(re.search(r"-?\d+", rate).group()) if re.search(r"-?\d+", rate) else 0
-        pace = round(max(0.6, min(1.8, 1.0 + r_num / 100)), 2)
+        # Map channel prosody to a faster Sarvam pace for short-form narration.
+        pace = _sarvam_pace(rate)
         wav_path = str(pathlib.Path(mp3_path).with_suffix(".wav"))
         try:
             dur = synth_sarvam(text, lang, wav_path,
@@ -141,9 +144,9 @@ def _estimate_word_times(text: str, duration: float) -> list:
     # Weight by character length (longer words take longer to say)
     weights = [max(1, len(t)) for t in tokens]
     total_w = sum(weights)
-    # Leave a small silent lead-in and trail
-    usable = duration * 0.90
-    start_offset = duration * 0.05
+    # Keep only a tiny edge margin; the caller trims to these estimated boundaries.
+    start_offset = min(0.02, duration / 2)
+    usable = max(0.0, duration - start_offset - min(0.03, duration / 2))
     words = []
     t = start_offset
     for tok, w in zip(tokens, weights):
@@ -198,9 +201,9 @@ def synth_beats(beats, lcfg, workdir, mp3_out):
         _synth_one(b["line"], lcfg["voice"], rate, pitch, vol, str(raw), str(wj),
                    lang=lang, sarvam_voice_id=sarvam_voice_id)
         w = _json.loads(wj.read_text(encoding="utf-8"))
-        # cut to the speech: 30 ms before the first word, 110 ms after the last
+        # Keep a short natural edge around the spoken segment.
         cut0 = max(0.0, w[0]["start"] - 0.03)
-        cut1 = w[-1]["end"] + 0.11
+        cut1 = w[-1]["end"] + 0.05
         seg = workdir / f"b{i}.wav"
         _ff(["-i", str(raw), "-ss", f"{cut0:.3f}", "-t", f"{cut1 - cut0:.3f}",
              "-ar", str(SR), "-ac", "1", "-c:a", "pcm_s16le", str(seg)])

@@ -58,6 +58,12 @@ def main():
     missing = [k for k in REQUIRED_ENV if not os.environ.get(k)]
     results.append(_check(".env keys", not missing,
                           ("missing: " + ", ".join(missing)) if missing else "all set"))
+    groq_backup = os.environ.get("GROQ_API_KEY_2") or os.environ.get("groq_api_key_2")
+    results.append(_check("Groq backup key configured", bool(groq_backup),
+                          "set GROQ_API_KEY_2 for automatic 429 fallback"))
+    gemini_backup = os.environ.get("GEMINI_API_KEY_2") or os.environ.get("gemini_api_key_2")
+    results.append(_check("Gemini backup key configured", bool(gemini_backup),
+                          "set GEMINI_API_KEY_2 for automatic quota fallback"))
 
     for ch in cfg.get("channels", {}):
         results.append(_check(f"tokens/yt_{ch}.json",

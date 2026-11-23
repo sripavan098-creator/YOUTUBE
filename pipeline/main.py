@@ -335,6 +335,9 @@ def pump_ig():
 def main():
     if "--now" in sys.argv:
         morning()
+    elif "--gallery" in sys.argv:
+        from pipeline import gallery
+        print(gallery.build())
     elif "--learn" in sys.argv:
         learn.refresh_stats()
     elif "--ig" in sys.argv:
