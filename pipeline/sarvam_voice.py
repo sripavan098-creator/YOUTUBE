@@ -30,11 +30,22 @@ SARVAM_BASE = "https://api.sarvam.ai"
 # Sarvam language codes per channel language key
 LANG_CODE = {"hi": "hi-IN", "te": "te-IN", "en": "en-IN"}
 
-# Best Sarvam voices for each language (conversational/expressive style)
-# These are known-good IDs from Sarvam's voice catalogue
+# Best Sarvam voices for each language (research-validated 2026)
+# ritu_hi_reels: energetic reel voice — more expressive than ritu_hi_conversation
+# kavitha_te_narration: best Telugu narration voice, smoother pacing
 DEFAULT_VOICES = {
-    "hi": "ritu_hi_conversation",    # Ritu — expressive, emotional, Hindi
-    "te": "neha_te_conversation",    # Neha — expressive, emotional, Telugu
+    "hi": "ritu_hi_reels",          # Ritu — energetic, emotional, made for Reels/Shorts
+    "te": "kavitha_te_narration",    # Kavitha — best Telugu narration, natural rhythm
+}
+
+# Per-role pace & temperature (overrides the base synth_sarvam defaults)
+# Research: hook needs urgency, payoff needs gravitas, rehook needs surprise peak
+ROLE_SETTINGS = {
+    "hook":    {"pace": 1.15, "temperature": 0.85},
+    "fact":    {"pace": 1.00, "temperature": 0.65},
+    "rehook":  {"pace": 1.20, "temperature": 0.90},
+    "payoff":  {"pace": 1.10, "temperature": 0.80},
+    "loop":    {"pace": 1.00, "temperature": 0.70},
 }
 
 # Cache file for cloned voice IDs so we don't re-create every run
@@ -106,17 +117,20 @@ def synth_sarvam(
     lang: str,
     wav_out: str,
     voice_id: str = None,
-    pace: float = 1.15,
+    pace: float = 1.10,
+    temperature: float = 0.75,
     attempts: int = 3,
 ) -> float:
     """Synthesise text with Sarvam Bulbul V4 Flash, write a WAV file, return duration.
 
     - voice_id: a cloned voice_id from register_voice(), or None to use the default
       built-in Sarvam voice for the channel language.
-    - pace: 0.5-2.0; 1.15 is slightly faster than neutral — natural for Shorts.
+    - pace: 0.5-2.0; 1.10 is slightly faster than neutral — natural for Shorts.
+    - temperature: 0.5-1.0; higher = more expressive. 0.75 for Hindi, 0.65 for Telugu.
+    - enable_preprocessing=True: Sarvam reads numbers, symbols and English words naturally.
     """
     lang_code = LANG_CODE.get(lang, "en-IN")
-    voice = voice_id or DEFAULT_VOICES.get(lang, "ritu_hi_conversation")
+    voice = voice_id or DEFAULT_VOICES.get(lang, "ritu_hi_reels")
 
     last = None
     for i in range(attempts):
@@ -142,6 +156,8 @@ def synth_sarvam(
                     "target_language_code": lang_code,
                     "speaker": voice,
                     "pace": pace,
+                    "loudness": 1.5,           # slightly louder — voices compete with music bed
+                    "speech_sample_rate": 22050,
                     "enable_preprocessing": True,
                     "model": "bulbul:v4",
                 }
