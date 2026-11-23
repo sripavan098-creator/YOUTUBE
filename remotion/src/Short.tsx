@@ -17,7 +17,7 @@ import type { Scene, ShortProps } from './ShortProps';
 
 export type Variant = 'explainer' | 'list' | 'versus' | 'timeline';
 
-const HOOK_SECONDS = 2.5;
+const HOOK_SECONDS = 2.8;
 const CTA_SECONDS = 2.8;
 const SEG_SECONDS = 2.6; // nothing stays on one framing longer than this
 const ORIGINS = ['50% 38%', '22% 30%', '78% 62%', '50% 74%', '70% 28%', '30% 70%'];

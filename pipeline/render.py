@@ -116,7 +116,7 @@ def render(sid, channel, lcfg, script, mp3, words_json, duration, shot_paths, la
         "headline": script["title"],
         "hook": script.get("hook_text") or script["title"],
         "emphasis": script.get("emphasis", []),
-        "cta": script.get("cta_text") or lcfg["cta"],
+        "cta": script.get("cta_screen") or script.get("cta_text") or lcfg["cta"],
         "audio": f"a/{sid}/{channel}/v.mp3",
         "audioDuration": duration,
         "words": words,

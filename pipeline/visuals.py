@@ -16,6 +16,8 @@ import time
 
 import requests
 
+from pipeline import retention as R
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CACHE = ROOT / "out" / "unsplash_cache.json"
 WIKIMEDIA_CACHE = ROOT / "out" / "wikimedia_cache.json"
@@ -140,15 +142,27 @@ def _unsplash_search(q):
 
 
 def _unsplash_photo(q, used, dest):
-    for p in _unsplash_search(q):
-        if ("u", p["id"]) in used or not _is_relevant(q, p.get("description", "")):
+    candidates = [
+        p for p in _unsplash_search(q)
+        if ("u", p["id"]) not in used
+        and _is_relevant(q, p.get("description", ""))
+    ]
+    ranked = sorted(
+        candidates,
+        key=lambda p: R.rank_results([p], q)[1],
+        reverse=True,
+    )
+    for p in ranked:
+        blob = p.get("description", "").lower()
+        if any(bad in blob for bad in R.BAD_VISUAL):
             continue
         used.add(("u", p["id"]))
-        # imgix params: exact 9:16 crop at 1080x1920, so Remotion gets a sharp, ready frame
         sep = "&" if "?" in p["raw"] else "?"
         url = f"{p['raw']}{sep}w=1080&h=1920&fit=crop&crop=entropy&q=80&fm=jpg"
         path = _download(url, dest.with_suffix(".jpg"))
-        if p.get("dl"):  # Unsplash API guideline: report the download (not rate limited)
+        if not R.vision_ok(str(path), q):
+            continue
+        if p.get("dl"):
             try:
                 requests.get(p["dl"], headers=_unsplash_headers(), timeout=10)
             except Exception:

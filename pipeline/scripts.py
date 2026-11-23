@@ -16,19 +16,21 @@ import time
 import requests
 from openai import APIStatusError, OpenAI
 
+from pipeline import retention as R
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # Script constraints are shared by the prompt, validator, and render retry.
-HOOK_MAX_WORDS = 6
-HOOK_MAX_SECONDS = 2.5
+HOOK_MAX_WORDS = R.MAX_HOOK_WORDS
+HOOK_MAX_SECONDS = R.MAX_HOOK_SEC
 HOOK_CARD_MIN_WORDS = 2
 HOOK_CARD_MAX_WORDS = 5
 BEAT_MIN_WORDS = 5
-BEAT_MAX_WORDS = 14
+BEAT_MAX_WORDS = R.MAX_BEAT_WORDS
 MIN_BEATS = 6
 MAX_BEATS = 9
-SCRIPT_MIN_WORDS = 60
-SCRIPT_MAX_WORDS = 95
+SCRIPT_MIN_WORDS = R.TOTAL_WORDS[0]
+SCRIPT_MAX_WORDS = R.TOTAL_WORDS[1]
 STORY_FORMATS = {"explainer", "list", "versus", "timeline"}
 
 # ---------------------------------------------------------------- stage 1: angles
@@ -83,6 +85,7 @@ Return STRICT JSON:
  "hook_text": "{hook_card_min_words}-{hook_card_max_words} native words shown huge on screen",
  "story_format": "explainer | list | versus | timeline",
  "cta_text": "a brief, topic-specific native-language question or invitation to share an experience",
+ "cta_screen": "<=9 words, concrete asset plus channel follow reason",
  "beats": [{{"line": "one spoken sentence", "shot": "2-3 English words for a photo search",
             "role": "hook | fact | rehook | payoff | loop",
             "mood": "shock | urgent | excited | curious | calm | serious (how it is SPOKEN)",
@@ -138,6 +141,8 @@ STYLE:
   "india" when a local feel helps. Never repeat a shot query.
 
 Return ONLY raw JSON. No markdown, no code fences."""
+
+SYS_WRITE = SYS_WRITE + R.PROMPT_RULES
 
 LANG_NAME = {"hi": "Hindi (Devanagari)", "te": "Telugu (Telugu script)", "en": "English"}
 
@@ -348,13 +353,6 @@ def check_script(d, lang=None):
     if hook_words > HOOK_MAX_WORDS:
         return (f"hook is {hook_words} words (need <={HOOK_MAX_WORDS}, "
                 f"it must be spoken in {HOOK_MAX_SECONDS} s)")
-    if lang in ("hi", "te"):
-        for i, l in enumerate(lines):
-            if re.search(r"[A-Za-z]", l):
-                return (f"beat {i} contains Latin letters; write it entirely in "
-                        f"{'Devanagari' if lang == 'hi' else 'Telugu'} script")
-        if re.search(r"[A-Za-z]", str(d.get("hook_text", ""))):
-            return "hook_text contains Latin letters"
     total = sum(len(l.split()) for l in lines)
     if not (SCRIPT_MIN_WORDS <= total <= SCRIPT_MAX_WORDS):
         return f"script is {total} words (need {SCRIPT_MIN_WORDS}-{SCRIPT_MAX_WORDS})"
@@ -381,8 +379,9 @@ def check_script(d, lang=None):
         return "story_format must be explainer, list, versus, or timeline"
     if not str(d.get("cta_text", "")).strip():
         return "missing topic-specific cta_text"
-    if lang in ("hi", "te") and re.search(r"[A-Za-z]", str(d["cta_text"])):
-        return "cta_text contains Latin letters"
+    retention_reason = R.gates(d, lang)
+    if retention_reason:
+        return retention_reason
     if not d.get("hashtags"):
         return "missing hashtags"
     return None
@@ -463,6 +462,12 @@ def write_script(story, angle, lcfg, cfg, note="", archetype="stake"):
                     data["archetype"] = archetype
                     if cfg.get("polish", True):
                         data = _polish(data, system, base, fn, model, lcfg)
+                    retention_score, retention_notes = R.score(data, lcfg.get("lang"))
+                    print(
+                        f"  retention {retention_score}/100 [{R.verdict(retention_score)}]"
+                        + (f" :: {', '.join(retention_notes)}" if retention_notes else ""),
+                        flush=True,
+                    )
                     return data
                 feedback = (f"\n\nYOUR PREVIOUS ANSWER WAS REJECTED: {reason}. "
                             f"Fix exactly that and return the full JSON again.")
@@ -566,6 +571,7 @@ def _finish(d, lcfg):
     if d.get("story_format") not in STORY_FORMATS:
         d["story_format"] = "explainer"
     d.setdefault("cta_text", lcfg.get("cta", ""))
+    d.setdefault("cta_screen", d["cta_text"])
     d.setdefault("description", d["title"])
     d.setdefault("ig_caption", d["title"] + "\n\n" + " ".join(d["hashtags"][:5]))
     return d
@@ -586,7 +592,7 @@ def _polish(d, system, base, fn, model, lcfg):
         slim = {k: d[k] for k in ("title", "claim", "supporting_facts", "hook_text",
                                   "beats", "emphasis", "description",
                                   "ig_caption", "hashtags", "search_terms", "story_format",
-                                  "cta_text") if k in d}
+                                  "cta_text", "cta_screen") if k in d}
         raw = fn(SYS_POLISH.format(lang_name=LANG_NAME.get(lcfg["lang"], lcfg["lang"]),
                                    hook_max_words=HOOK_MAX_WORDS),
                  json.dumps(slim, ensure_ascii=False), model, 0.5)

@@ -212,7 +212,7 @@ def morning():
             sid = db.add_story(day, channel, story["url"], story["title"], story["body"])
             try:
                 # Stage 2: write the picked angle natively for THIS channel, then voice it.
-                # The spoken hook must land within 2.5 s. TTS length can only be known after
+                # The spoken hook must land within 2.8 s. TTS length can only be known after
                 # synthesis, so an overlong hook is rewritten once using its measured length.
                 (ROOT / "out").mkdir(exist_ok=True)
                 raw_mp3 = ROOT / "out" / f"{sid}_{channel}.raw.mp3"

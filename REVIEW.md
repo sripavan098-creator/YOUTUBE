@@ -19,8 +19,8 @@
 ## What was weak for retention (and what replaced it)
 | Area | v2 | v3 |
 |---|---|---|
-| Script | one LLM call wrote 3 angles x 2 languages, `reasoning_effort: low`, one attempt, only checked >=20 words | stage 1 cheap angles + facts; stage 2 writes the picked angle per channel as timed beats, validated (hook <=6 words and <=2.5 seconds, 60-95 words, 6-9 beats, source-backed claim/facts, unique shots, closing question) with the failure reason fed back on retry |
-| Hook | pinned headline for the whole video, no on-screen hook | 2-5 word hook card pops in for 2.5 s, spoken hook <=6 words and <=2.5 s, loop-friendly last line |
+| Script | one LLM call wrote 3 angles x 2 languages, `reasoning_effort: low`, one attempt, only checked >=20 words | stage 1 cheap angles + facts; stage 2 writes the picked angle per channel as timed beats, validated (hook <=6 words and <=2.8 seconds, 50-80 words, 6-9 beats, source-backed claim/facts, unique visible-object shots, number card, concrete CTA, closing question) with the exact failure fed back on retry |
+| Hook | pinned headline for the whole video, no on-screen hook | 2-5 word hook card pops in for 2.8 s, spoken hook <=6 words and <=2.8 s, loop-friendly last line |
 | Footage | one still photo per 3-4 s, queries unrelated to the line | one portrait video clip per spoken line, query written per line, no repeats |
 | Cuts | none (slow zoom on 4 stills) | hard cut on every sentence with a punch-in, alternating drift, whoosh on the cut |
 | Captions | 3-word chunks, active word recoloured | sentence-aware chunks, spring pop, thick stroke, keyword words coloured in brand colour, safe zone above Shorts/Reels UI |

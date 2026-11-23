@@ -50,9 +50,11 @@ colour, a 2-second hook card, loudness-normalised voice. Details and the bug lis
   become stories themselves. It needs no API key; if Google is unreachable the pipeline runs
   without the boost. Turn off with `trends: false` in `config.yaml`.
 - **Pure Telugu / Hindi**: the writer prompt asks for everyday spoken language in the native
-  script, and the validator rejects any line containing Latin letters.
-- **2.5-second hook**: the prompt and validator share a six-word maximum, and the spoken
-  hook is measured after TTS. A script still over 2.5 seconds after one rewrite is rejected.
+  script. Technical terms, acronyms and brands may remain in Latin; invented native-script
+  spellings are rejected by the retention validator.
+- **2.8-second retention hook**: the prompt and validator share a six-word maximum, and the
+  spoken hook is measured after TTS. Scripts use 6-9 beats and 50-80 spoken words.
+  A script still over 2.8 seconds after one rewrite is rejected.
 - **Photo sources**: one portrait photo per spoken line, 9:16 crop. Unsplash searches are
   cached in `out/unsplash_cache.json`; its demo quota is 50 requests/hour. When quota is low,
   Wikimedia Commons is used as a no-key fallback, restricted to CC0/public-domain images
@@ -123,7 +125,7 @@ is also verified by doing the real thing:
 - **Voice**: every beat is voiced separately with its own mood (shock/urgent/curious/calm/serious), silence trimmed using exact word timings, deliberate pauses before re-hooks and payoffs. Beat cut times are exact.
 - **Sound**: broadcast voice chain (80 Hz HPF, +2 dB warmth, +2.5 dB presence, compression, -14 LUFS); procedural impact / riser / whoosh / pop placed by beat role; generated music bed that ducks under speech. Drop files in `assets/sfx/<kind>.wav` or `assets/music/` to override.
 - **Screen**: flash cuts, re-framing every 2.6 s, impact shake, grade + vignette + grain, hook slam with RGB glitch, kinetic keyword slam, stat cards, mid-video follow nudge, poster scenes when no photo is found. Telugu/Devanagari fonts are bundled (`npm install` in `remotion/`).
-- **Content/SEO**: consistent script limits (6-9 beats, 60-95 words, 6-word hook), a source-backed claim with three supporting facts, topic-specific CTAs, channel editorial identities, hook archetypes, search phrases, and topic de-duplication.
+- **Content/SEO**: consistent script limits (6-9 beats, 50-80 words, 6-word/2.8-second hook), a source-backed claim with three supporting facts, topic-specific CTAs, channel editorial identities, hook archetypes, search phrases, and topic de-duplication.
 - **Visual treatment**: the script's story format selects a matching explainer, list, versus, or timeline treatment while avoiding recent repeats.
 - **Learning**: `python -m pipeline.main --learn` (also nightly 05:30) combines views with average view percentage, engaged views, and subscribers gained when YouTube Analytics access is available. Re-run `python -m pipeline.auth <hi|te>` to authorize the read-only Analytics scope. YouTube's viewed-vs-swiped metric is not currently included in this API report.
 - Rollback: `git revert` to commit abbba14 (pre-v4).
