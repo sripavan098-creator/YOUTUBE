@@ -17,6 +17,7 @@ import requests
 from openai import APIStatusError, OpenAI
 
 from pipeline import retention as R
+from pipeline import langfix as L
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -462,6 +463,17 @@ def write_script(story, angle, lcfg, cfg, note="", archetype="stake"):
                     data["archetype"] = archetype
                     if cfg.get("polish", True):
                         data = _polish(data, system, base, fn, model, lcfg)
+                    data = L.repair_script(data, lcfg.get("lang"), story)
+                    data = L.judge(data, lcfg.get("lang"))
+                    retention_reason = R.gates(data, lcfg.get("lang"))
+                    if retention_reason:
+                        feedback = (
+                            "\n\nYOUR LANGFIX/JUDGE OUTPUT WAS REJECTED: "
+                            f"{retention_reason}. Fix exactly that and return the full JSON."
+                        )
+                        print(f"  post-language gate rejected: {retention_reason}", flush=True)
+                        _dump(f"{slug}_{model.replace('/', '-')}_langfix", raw)
+                        continue
                     retention_score, retention_notes = R.score(data, lcfg.get("lang"))
                     print(
                         f"  retention {retention_score}/100 [{R.verdict(retention_score)}]"

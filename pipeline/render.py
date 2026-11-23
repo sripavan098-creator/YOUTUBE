@@ -1,8 +1,11 @@
 import json
+import os
 import pathlib
 import shutil
 import subprocess
 import sys
+
+from pipeline import motion
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 REMOTION = ROOT / "remotion"
@@ -92,9 +95,23 @@ def render(sid, channel, lcfg, script, mp3, words_json, duration, shot_paths, la
             _prep_clip(src, pub / name, e - s)
             sc.update(src=f"a/{sid}/{channel}/{name}", kind="video")
         else:
-            name = f"s{i}.jpg"
-            shutil.copy(src, pub / name)
-            sc.update(src=f"a/{sid}/{channel}/{name}", kind="image")
+            if os.getenv("MOTION_STILLS", "1") == "1":
+                made = motion.still_to_clip(
+                    src,
+                    pub / f"s{i}.mp4",
+                    e - s,
+                    aggressive=(i == 0),
+                    reverse=(i % 2 == 1),
+                )
+                name = pathlib.Path(made).name
+                sc.update(
+                    src=f"a/{sid}/{channel}/{name}",
+                    kind="video" if name.endswith(".mp4") else "image",
+                )
+            else:
+                name = f"s{i}.jpg"
+                shutil.copy(src, pub / name)
+                sc.update(src=f"a/{sid}/{channel}/{name}", kind="image")
         if use_meta:
             b = meta[i]
             sc["role"] = b.get("role") or ("hook" if i == 0 else "fact")

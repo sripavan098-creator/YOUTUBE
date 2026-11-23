@@ -39,7 +39,8 @@ sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
 from pipeline import (audio, db, publish_ig, publish_yt, refresh_ig, render, review,  # noqa: E402
-                      learn, scripts, sources, timing, trends, visuals, voice, longform)
+                      learn, scripts, sources, timing, trends, visuals, voice, longform,
+                      langfix, motion)
 
 def _clean_dict(script):
     """Bulletproof sanitizer: Nukes ALL control characters from metadata."""
@@ -253,6 +254,14 @@ def morning():
                 duration = audio.finish(raw_mp3, mp3, starts, duration,
                                         sfx=CFG.get("sfx", True),
                                         music_volume=CFG.get("music_volume", 0.16), cues=cues)
+                enhanced_mp3 = ROOT / "out" / f"{sid}_{channel}.enhanced.mp3"
+                final_mp3 = motion.enhance_audio(
+                    mp3, starts, enhanced_mp3,
+                    music_dir=str(ROOT / "assets" / "music"),
+                )
+                if final_mp3 != mp3:
+                    mp3 = pathlib.Path(final_mp3)
+                langfix.audio_gate(str(mp3), script["script"], lcfg["lang"])
                 video = render.render(sid, channel, lcfg, script, str(mp3), str(wj),
                                       duration, shots, layout, beats=beats)
                 # Persist the generated metadata next to the mp4 so a later batch

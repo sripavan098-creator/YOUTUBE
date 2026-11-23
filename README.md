@@ -25,6 +25,11 @@ python -m pipeline.main --now # one batch: 8 Shorts -> out/
 | `python -m pipeline.main --replay` | Promote the private backlog after the API audit clears |
 | `python -m pipeline.main` | Daemon: 06:00 daily, long-form Tue/Fri, IG pump every 15 min |
 | `python -m pipeline.doctor` | Preflight checks |
+| `python pipeline/publish_ig.py <video_path> <lang> [caption]` | Queue one Reel through the Make.com webhook |
+
+The standalone Instagram publisher requires `MAKE_IG_WEBHOOK_URL` in `.env`. It uploads
+the video to a temporary public host so Make.com can fetch it. Scheduled pipeline posts
+continue using `publish()` and do not use this webhook.
 
 ## The audit gate
 
@@ -114,7 +119,7 @@ is also verified by doing the real thing:
 | `pipeline/visuals.py` | Unsplash and Wikimedia Commons photos; optional Pexels videos |
 | `pipeline/render.py` | Remotion render, layout to composition mapping |
 | `pipeline/publish_yt.py` | Upload, slot scheduling, privacy gate, promote |
-| `pipeline/publish_ig.py` | Reels publish via Graph API |
+| `pipeline/publish_ig.py` | Scheduled Instagram publishing and standalone Make.com uploads |
 | `pipeline/host.py` | GitHub branch as public host for IG |
 | `pipeline/longform.py` | Weekly connective long-form |
 | `pipeline/replay.py` | Promote private backlog in place |
@@ -127,5 +132,7 @@ is also verified by doing the real thing:
 - **Screen**: flash cuts, re-framing every 2.6 s, impact shake, grade + vignette + grain, hook slam with RGB glitch, kinetic keyword slam, stat cards, mid-video follow nudge, poster scenes when no photo is found. Telugu/Devanagari fonts are bundled (`npm install` in `remotion/`).
 - **Content/SEO**: consistent script limits (6-9 beats, 50-80 words, 6-word/2.8-second hook), a source-backed claim with three supporting facts, topic-specific CTAs, channel editorial identities, hook archetypes, search phrases, and topic de-duplication.
 - **Visual treatment**: the script's story format selects a matching explainer, list, versus, or timeline treatment while avoiding recent repeats.
+- **Language integrity**: optional `NATIVE_JUDGE=1` applies a native Telugu/Hindi rewrite pass; `ASR_GATE=1` transcribes the final voice with Whisper and reports character error rate. Auto-repair replaces source-supported technical transliterations. Set `VISION_VERIFY=1` for frame relevance checks.
+- **Motion**: still photos become push/pull portrait clips by default (`MOTION_STILLS=1`). Set `AUDIO_ENHANCE=1` for an optional extra audio pass with a music bed and cut whooshes.
 - **Learning**: `python -m pipeline.main --learn` (also nightly 05:30) combines views with average view percentage, engaged views, and subscribers gained when YouTube Analytics access is available. Re-run `python -m pipeline.auth <hi|te>` to authorize the read-only Analytics scope. YouTube's viewed-vs-swiped metric is not currently included in this API report.
 - Rollback: `git revert` to commit abbba14 (pre-v4).
