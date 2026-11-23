@@ -30,25 +30,39 @@ Use only facts present in the supplied headlines. Do not invent numbers or quote
 
 
 def _llm(prompt):
-    import os
-
-    import requests
     from openai import OpenAI
+    from pipeline.provider_keys import groq_keys
+    from pipeline.scripts import _gemini
+
+    def groq_call(m):
+        last_error = None
+        for index, key in enumerate(groq_keys()):
+            try:
+                result = OpenAI(
+                    api_key=key,
+                    base_url="https://api.groq.com/openai/v1",
+                ).chat.completions.create(
+                    model=m,
+                    temperature=0.8,
+                    response_format={"type": "json_object"},
+                    messages=[{"role": "system", "content": LONGFORM_SYS},
+                              {"role": "user", "content": prompt}],
+                ).choices[0].message.content
+                if index:
+                    print("  Groq backup key succeeded")
+                return result
+            except Exception as error:
+                last_error = error
+                if index + 1 < len(groq_keys()):
+                    print(f"  Groq key {index + 1} failed, trying backup key...")
+                    continue
+                raise
+        raise last_error
 
     for model, call in (
-        (CFG["model_primary"], lambda m: OpenAI(
-            api_key=os.environ["GROQ_API_KEY"], base_url="https://api.groq.com/openai/v1"
-        ).chat.completions.create(
-            model=m, temperature=0.8, response_format={"type": "json_object"},
-            messages=[{"role": "system", "content": LONGFORM_SYS},
-                      {"role": "user", "content": prompt}]).choices[0].message.content),
-        (CFG["model_fallback"], lambda m: requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent",
-            headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-            json={"contents": [{"parts": [{"text": LONGFORM_SYS + "\n\n" + prompt}]}],
-                  "generationConfig": {"responseMimeType": "application/json",
-                                       "temperature": 0.8}},
-            timeout=180).json()["candidates"][0]["content"]["parts"][0]["text"]),
+        (CFG["model_primary"], groq_call),
+        (CFG["model_fallback"], lambda m: _gemini(
+            LONGFORM_SYS, prompt, m, temperature=0.8, timeout=180)),
     ):
         try:
             data = json.loads(call(model))

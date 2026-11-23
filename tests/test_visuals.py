@@ -25,6 +25,8 @@ class VisualsTests(unittest.TestCase):
     def test_candidate_relevance_requires_subject_overlap(self):
         self.assertTrue(visuals._is_relevant("Bisleri water bottle", "water bottle on table"))
         self.assertFalse(visuals._is_relevant("Bisleri water bottle", "old soldier poster"))
+        self.assertTrue(visuals._is_relevant("new smartphone launch", "smartphone on display"))
+        self.assertTrue(visuals._is_relevant("नया स्मार्टफोन", "स्मार्टफोन का चित्र"))
 
     def test_wikimedia_search_uses_cached_public_domain_results(self):
         response = Mock()

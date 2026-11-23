@@ -373,6 +373,9 @@ def main():
         morning()
     elif "--evening" in sys.argv:
         evening()
+    elif "--gallery" in sys.argv:
+        from pipeline import gallery
+        print(gallery.build())
     elif "--learn" in sys.argv:
         learn.refresh_stats()
     elif "--ig" in sys.argv:

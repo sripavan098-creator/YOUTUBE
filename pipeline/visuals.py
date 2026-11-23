@@ -13,6 +13,7 @@ import os
 import pathlib
 import re
 import time
+import unicodedata
 
 import requests
 
@@ -65,10 +66,29 @@ _VISUAL_STOP_WORDS = {
 
 
 def _visual_tokens(text):
-    return {
-        token for token in re.findall(r"[a-z0-9]+", str(text).casefold())
-        if len(token) > 2 and token not in _VISUAL_STOP_WORDS
-    }
+    tokens = set()
+    current = []
+    for char in str(text).casefold():
+        category = unicodedata.category(char)[0]
+        if category in ("L", "N") or (category == "M" and current):
+            current.append(char)
+        elif current:
+            token = "".join(current)
+            if len(token) > 2 and token not in _VISUAL_STOP_WORDS:
+                tokens.add(token)
+            current = []
+    if current:
+        token = "".join(current)
+        if len(token) > 2 and token not in _VISUAL_STOP_WORDS:
+            tokens.add(token)
+    return tokens
+
+
+def _relevance_score(query, description):
+    wanted = _visual_tokens(query)
+    if not wanted:
+        return 0
+    return len(wanted & _visual_tokens(description))
 
 
 def _is_relevant(query, description):
@@ -76,10 +96,8 @@ def _is_relevant(query, description):
     wanted = _visual_tokens(query)
     if not wanted:
         return False
-    found = _visual_tokens(description)
-    overlap = len(wanted & found)
-    minimum = 2 if len(wanted) >= 3 else 1
-    return overlap >= minimum
+    minimum = 2 if len(wanted) > 3 else 1
+    return _relevance_score(query, description) >= minimum
 
 
 # ---------------------------------------------------------------- Unsplash
@@ -228,9 +246,17 @@ def _wikimedia_search(q):
 
 
 def _wikimedia_photo(q, used, dest):
-    for photo in _wikimedia_search(q):
-        if not _is_relevant(q, f"{photo.get('title', '')} {photo.get('description', '')}"):
-            continue
+    candidates = [
+        photo for photo in _wikimedia_search(q)
+        if _is_relevant(q, f"{photo.get('title', '')} {photo.get('description', '')}")
+    ]
+    candidates.sort(
+        key=lambda photo: _relevance_score(
+            q, f"{photo.get('title', '')} {photo.get('description', '')}"
+        ),
+        reverse=True,
+    )
+    for photo in candidates:
         image_id = ("w", photo["id"])
         if image_id in used:
             continue
@@ -274,11 +300,11 @@ def _pexels_video(q, used, dest):
 # ---------------------------------------------------------------- public
 
 def fetch_shots(keywords, dest_dir):
-    """Return one UNIQUE local media path per keyword, in order.
+    """Return one unique local media path per keyword, or None for a designed scene.
 
-    Each beat gets a different photo or clip whose indexed description overlaps the
-    requested subject. If no relevant footage is available, the renderer uses a designed
-    information card instead of unrelated stock.
+    Stock media must have indexed subject overlap. If no relevant photo or clip exists,
+    the renderer creates a keyword-labeled illustrated scene instead of a blank frame or
+    unrelated stock.
     """
     dest_dir = pathlib.Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
