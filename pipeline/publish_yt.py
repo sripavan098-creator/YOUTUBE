@@ -32,20 +32,28 @@ def _analytics_service(channel):
 def _slot(lcfg, step_min, index):
     """Pick the posting slot for this video.
 
-    Research: 8:30 AM IST (commute) + 7:30 PM IST (prime time) are the two
-    daily slots. index 0 → yt_start (morning), index 1 → yt_start_2 (evening),
-    index 2+ → yt_start the next day with step_min offset.
+    4-slot schedule (IST):
+      index % 4 == 0  → yt_start   (08:30 morning commute)
+      index % 4 == 1  → yt_start_2 (13:00 lunch)
+      index % 4 == 2  → yt_start_3 (18:00 post-work)
+      index % 4 == 3  → yt_start_4 (21:00 prime time)
+
+    Falls back to 2-slot if yt_start_3/4 not configured, and to 1-slot
+    if only yt_start is set — always safe.
     """
     now = datetime.datetime.now(IST)
-    # Choose which start time based on even/odd index
-    if index % 2 == 1 and lcfg.get("yt_start_2"):
-        h, m = map(int, lcfg["yt_start_2"].split(":"))
-        days_ahead = index // 2
-    else:
-        h, m = map(int, lcfg["yt_start"].split(":"))
-        days_ahead = index // 2
+    slot_keys = ["yt_start", "yt_start_2", "yt_start_3", "yt_start_4"]
+    # Build list of configured slots
+    slots = [lcfg.get(k) for k in slot_keys]
+    slots = [s for s in slots if s]  # drop None / unconfigured
+
+    n = len(slots)                    # 1, 2, or 4
+    slot_key = slots[index % n]
+    days_ahead = index // n
+
+    h, m = map(int, slot_key.split(":"))
     slot = now.replace(hour=h, minute=m, second=0, microsecond=0)
-    slot += datetime.timedelta(days=days_ahead, minutes=step_min * (index // 2))
+    slot += datetime.timedelta(days=days_ahead, minutes=step_min * days_ahead)
     while slot < now + datetime.timedelta(minutes=20):
         slot += datetime.timedelta(days=1)
     return slot

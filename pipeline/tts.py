@@ -1,4 +1,5 @@
 import os, base64, pathlib, subprocess, shutil, requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- Sarvam Config ---
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
@@ -53,7 +54,10 @@ def _sarvam_tts(text, lang, wav_path):
         "inputs": [text],
         "target_language_code": f"{lang}-IN",
         "speaker": speaker,
-        "model": "bulbul-v1"
+        "model": "bulbul:v4",
+        "loudness": 1.5,
+        "speech_sample_rate": 22050,
+        "enable_preprocessing": True,
     }
     
     r = requests.post(url, json=payload, headers=headers, timeout=30)
@@ -110,6 +114,27 @@ def _edge_tts(text, lang, out_path):
         await edge_tts.Communicate(text, voices.get(lang, voices["en"])).save(out_path)
     asyncio.run(run())
     print(f"  ✅ TTS via Edge TTS (Free Fallback)", flush=True)
+
+def synthesize_many(items, max_workers=6):
+    """Synthesise multiple (text, lang, output_path) tuples in parallel.
+
+    Returns list of output paths in the same order as items.
+    Use this whenever you have N beats/segments to synthesise — all API calls
+    fire concurrently so total time ≈ slowest single call, not sum of all.
+    """
+    results = [None] * len(items)
+
+    def _one(args):
+        idx, text, lang, out = args
+        return idx, synthesize(text, lang, out)
+
+    with ThreadPoolExecutor(max_workers=min(len(items), max_workers)) as ex:
+        futures = {ex.submit(_one, (i, t, l, o)): i for i, (t, l, o) in enumerate(items)}
+        for f in as_completed(futures):
+            idx, path = f.result()
+            results[idx] = path
+    return results
+
 
 def synthesize(text, lang, output_path):
     """Main entry point: Tries Sarvam -> Gemini -> Edge TTS"""
