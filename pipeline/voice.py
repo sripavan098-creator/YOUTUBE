@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import edge_tts
 from mutagen.mp3 import MP3
@@ -198,14 +199,45 @@ def synth_beats(beats, lcfg, workdir, mp3_out):
         except Exception as e:
             print(f"  [sarvam] voice clone registration failed: {e}")
 
+    # Build per-beat synthesis args (prosody is cheap, done upfront)
+    beat_args = []
     for i, b in enumerate(beats):
         role = b.get("role") or ("hook" if i == 0 else "fact")
         mood = b.get("mood") or DEFAULT_MOOD.get(role, "curious")
         rate, pitch, vol = prosody(lcfg.get("rate", "+0%"), lcfg.get("pitch", "+0Hz"),
                                    lcfg.get("volume", "+0%"), mood)
         raw, wj = workdir / f"b{i}.mp3", workdir / f"b{i}.json"
+        beat_args.append((i, b, role, rate, pitch, vol, raw, wj))
+
+    # ── Parallel TTS synthesis ──────────────────────────────────────────────
+    # All Sarvam/Edge API calls run concurrently; file I/O stays serial below.
+    # With 6 beats × ~3s each this drops total voice time from ~18s → ~3-4s.
+    def _synth_beat(args):
+        i, b, role, rate, pitch, vol, raw, wj = args
         _synth_one(b["line"], lcfg["voice"], rate, pitch, vol, str(raw), str(wj),
                    lang=lang, sarvam_voice_id=sarvam_voice_id, role=role)
+        return i
+
+    max_workers = min(len(beat_args), 6)
+    if max_workers > 1:
+        print(f"  [voice] synthesising {len(beat_args)} beats in parallel (workers={max_workers})", flush=True)
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {ex.submit(_synth_beat, args): args[0] for args in beat_args}
+            done = {}
+            for f in as_completed(futures):
+                idx = futures[f]
+                try:
+                    done[idx] = f.result()
+                except Exception as e:
+                    print(f"  [voice] beat {idx} failed: {e}", flush=True)
+                    raise
+    else:
+        # Single beat — no overhead needed
+        for args in beat_args:
+            _synth_beat(args)
+
+    # ── Assemble in original order (serial — file I/O must be ordered) ──────
+    for i, b, role, rate, pitch, vol, raw, wj in beat_args:
         w = _json.loads(wj.read_text(encoding="utf-8"))
         # Keep a short natural edge around the spoken segment.
         cut0 = max(0.0, w[0]["start"] - 0.03)
