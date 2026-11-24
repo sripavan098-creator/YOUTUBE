@@ -59,12 +59,16 @@ def _slot(lcfg, step_min, index):
     return slot
 
 
-def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=False):
+def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=False,
+           thumbnail=None):
     """Upload one Short.
 
     While the Cloud project is unaudited, `public_ok` stays False: the video is
     created private with no publishAt, because the API cannot publish it. Once the
     audit passes, pass True and the same call schedules it for its slot.
+
+    thumbnail: local path to a 1280×720 JPEG to set as the video thumbnail.
+               When supplied the thumbnail is uploaded immediately after the video.
     """
     yt = _service(channel)
     slot = _slot(lcfg, step_min, index)
@@ -96,7 +100,21 @@ def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=
 
     media = MediaFileUpload(video, chunksize=-1, resumable=True, mimetype="video/mp4")
     resp = yt.videos().insert(part="snippet,status", body=body, media_body=media).execute()
-    return resp["id"], slot.isoformat(), status["privacyStatus"]
+    video_id = resp["id"]
+
+    # ── Upload custom thumbnail ───────────────────────────────────────────────
+    # Thumbnails require the channel to have a verified phone number on YouTube.
+    # If that's not done yet this call returns 403; it will silently skip.
+    if thumbnail and pathlib.Path(thumbnail).is_file():
+        try:
+            thumb_media = MediaFileUpload(thumbnail, mimetype="image/jpeg")
+            yt.thumbnails().set(videoId=video_id, media_body=thumb_media).execute()
+            print(f"  [yt] thumbnail uploaded for {video_id}", flush=True)
+        except Exception as e:
+            print(f"  [yt] WARNING: thumbnail upload failed (need verified phone?): {e}",
+                  flush=True)
+
+    return video_id, slot.isoformat(), status["privacyStatus"]
 
 
 def publish_now(channel, video_id, slot=None):

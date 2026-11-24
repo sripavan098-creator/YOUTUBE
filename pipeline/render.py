@@ -242,4 +242,24 @@ def render(sid, channel, lcfg, script, mp3, words_json, duration, shot_paths, la
         )
     if not out.exists() or out.stat().st_size == 0:
         raise RuntimeError(f"render produced no output for {sid}/{channel}")
-    return str(out)
+
+    # ── Thumbnail: grab a visually-rich frame at ~0.5 s ──────────────────────
+    # YouTube shows this as the default thumbnail if none is uploaded.
+    # We always extract and pass it to the uploader so it looks intentional.
+    thumb = ROOT / "out" / f"{sid}_{channel}_thumb.jpg"
+    try:
+        # Seek to 0.5 s (hook card is visible → strong first impression)
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-ss", "0.5", "-i", str(out),
+             "-frames:v", "1", "-q:v", "2",
+             "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
+                    "pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black",
+             str(thumb)],
+            check=True, timeout=30,
+        )
+        print(f"  [thumb] generated {thumb.name}", flush=True)
+    except Exception as e:
+        print(f"  [thumb] WARNING: could not extract thumbnail: {e}", flush=True)
+        thumb = None
+
+    return str(out), str(thumb) if thumb and thumb.exists() else None

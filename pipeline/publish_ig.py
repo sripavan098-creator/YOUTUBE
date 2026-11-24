@@ -70,16 +70,86 @@ def _get_client(lang):
         return cl
 
 
-def publish(lang, path, caption, name=None):
-    """Upload a Reel for the scheduled pipeline and return its media ID."""
+def _extract_cover(video_path: pathlib.Path) -> pathlib.Path | None:
+    """Extract the first frame of the video at 0.5s as a cover JPEG.
+
+    Instagram Reels show a cover image chosen at upload time — without one
+    IG picks a random frame that often looks blurry or mid-transition.
+    We grab the same frame we use for YT thumbnails (hook card, 0.5 s).
+    """
+    import subprocess
+    cover = video_path.with_suffix(".cover.jpg")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-ss", "0.5", "-i", str(video_path),
+             "-frames:v", "1", "-q:v", "2",
+             "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,"
+                    "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black",
+             str(cover)],
+            check=True, timeout=30,
+        )
+        return cover if cover.is_file() else None
+    except Exception as e:
+        print(f"⚠️  Cover image extraction failed: {e}")
+        return None
+
+
+def publish(lang, path, caption, name=None, thumbnail=None):
+    """Upload a Reel for the scheduled pipeline and return its media ID.
+
+    thumbnail: optional path to a 1080×1920 JPEG cover image.
+               When None, we extract one from the video at 0.5 s automatically
+               so the Reel always has a clean hook-card cover.
+    """
     video_path = pathlib.Path(path)
     if not video_path.is_file():
         raise FileNotFoundError(f"Video not found: {video_path}")
 
+    # Resolve cover image — extract from video if not provided
+    cover_path = pathlib.Path(thumbnail) if thumbnail and pathlib.Path(thumbnail).is_file() \
+        else _extract_cover(video_path)
+
     client = _get_client(lang)
-    media = client.clip_upload(path=video_path, caption=caption)
-    print(f"✅ Reel posted to @{os.getenv(f'IG_USER_{lang.upper()}')}")
-    return str(media.pk)
+
+    # instagrapi's clip_upload accepts an optional `thumbnail` kwarg since v2.x
+    # Pass it when we have one; fall back gracefully for older versions.
+    extra = {}
+    if cover_path and cover_path.is_file():
+        extra["thumbnail"] = cover_path
+
+    attempts = 3
+    last_err = None
+    for attempt in range(1, attempts + 1):
+        try:
+            media = client.clip_upload(path=video_path, caption=caption, **extra)
+            print(f"✅ Reel posted to @{os.getenv(f'IG_USER_{lang.upper()}')} "
+                  f"(cover={'yes' if extra else 'no'})")
+            return str(media.pk)
+        except Exception as e:
+            last_err = e
+            msg = str(e).lower()
+            if "login_required" in msg or "not_logged_in" in msg:
+                print(f"⚠️  Session expired on attempt {attempt}, re-logging in...")
+                # Clear cached client to force re-login
+                user = os.getenv(f"IG_USER_{lang.upper()}")
+                with _lock:
+                    _clients.pop(user, None)
+                sess = _session_path(user) if user else None
+                if sess and sess.exists():
+                    sess.unlink(missing_ok=True)
+                try:
+                    client = _get_client(lang)
+                except Exception as login_err:
+                    print(f"❌ Re-login failed: {login_err}")
+                    raise
+            elif attempt < attempts:
+                import time
+                print(f"⚠️  clip_upload attempt {attempt} failed: {e} — retrying in 5s...")
+                time.sleep(5)
+            else:
+                raise RuntimeError(f"clip_upload failed after {attempts} attempts: {last_err}") \
+                    from last_err
+    raise RuntimeError(f"clip_upload failed: {last_err}") from last_err
 
 
 def upload_reel(video_path, caption, lang):
