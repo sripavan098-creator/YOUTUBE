@@ -285,8 +285,8 @@ def morning(slot_offset: int = 0):
                 if final_mp3 != mp3:
                     mp3 = pathlib.Path(final_mp3)
                 langfix.audio_gate(str(mp3), script["script"], lcfg["lang"])
-                video = render.render(sid, channel, lcfg, script, str(mp3), str(wj),
-                                      duration, shots, layout, beats=beats)
+                video, thumbnail, ig_cover = render.render(sid, channel, lcfg, script, str(mp3), str(wj),
+                                                duration, shots, layout, beats=beats)
                 # Persist the generated metadata next to the mp4 so a later batch
                 # upload can reuse it instead of guessing from the filename.
                 (ROOT / "out" / f"{sid}_{channel}.meta.json").write_text(
@@ -302,7 +302,8 @@ def morning(slot_offset: int = 0):
                     vid_id, slot, privacy = publish_yt.upload(
                         channel, lcfg, CFG["yt_step_min"], slot_offset + i,
                         _clean_dict(script), video,
-                        story["url"], CFG.get("yt_public_after_audit", False))
+                        story["url"], CFG.get("yt_public_after_audit", False),
+                        thumbnail=thumbnail)
                     print(f"YT {channel} {vid_id} {privacy} {slot}")
                     # upload_batch.py checks this marker so it never uploads the same render twice
                     (ROOT / "out" / f"{sid}_{channel}.uploaded.json").write_text(
@@ -376,7 +377,18 @@ def pump_ig():
     now = datetime.datetime.now().isoformat(timespec="seconds")
     for row_id, sid, channel, path, caption in db.due_ig(now):
         try:
-            publish_ig.publish(channel, path, caption, f"{sid}_{channel}.mp4")
+            out_dir = ROOT / "out"
+            # Prefer the designed IG cover (1080×1920) for Instagram
+            ig_cover_path = out_dir / f"{sid}_{channel}_ig_cover.jpg"
+            yt_thumb_path = out_dir / f"{sid}_{channel}_thumb.jpg"
+            if ig_cover_path.exists():
+                thumbnail = str(ig_cover_path)
+            elif yt_thumb_path.exists():
+                thumbnail = str(yt_thumb_path)
+            else:
+                thumbnail = None
+            publish_ig.publish(channel, path, caption, f"{sid}_{channel}.mp4",
+                               thumbnail=thumbnail)
             db.mark_ig(row_id, "done")
             print(f"IG posted story {sid} on {channel}")
         except Exception as e:

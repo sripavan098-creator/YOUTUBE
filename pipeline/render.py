@@ -242,4 +242,29 @@ def render(sid, channel, lcfg, script, mp3, words_json, duration, shot_paths, la
         )
     if not out.exists() or out.stat().st_size == 0:
         raise RuntimeError(f"render produced no output for {sid}/{channel}")
-    return str(out)
+
+    # ── Thumbnails: designed card via thumbnail.py (falls back to ffmpeg) ───
+    try:
+        from pipeline.thumbnail import make_thumbnails
+        yt_thumb, ig_cover = make_thumbnails(sid, channel, lcfg, script, str(out))
+    except Exception as e:
+        print(f"  [thumb] thumbnail.py error ({e}), falling back to ffmpeg", flush=True)
+        yt_thumb, ig_cover = None, None
+
+    # Hard ffmpeg fallback if everything else failed
+    if not yt_thumb:
+        thumb_path = ROOT / "out" / f"{sid}_{channel}_thumb.jpg"
+        try:
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-y", "-ss", "0.5", "-i", str(out),
+                 "-frames:v", "1", "-q:v", "2",
+                 "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
+                        "pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black",
+                 str(thumb_path)],
+                check=True, timeout=30,
+            )
+            yt_thumb = str(thumb_path)
+        except Exception as e:
+            print(f"  [thumb] WARNING: ffmpeg fallback also failed: {e}", flush=True)
+
+    return str(out), yt_thumb, ig_cover
