@@ -38,16 +38,24 @@ STORY_FORMATS = {"explainer", "list", "versus", "timeline"}
 # ---------------------------------------------------------------- stage 1: angles
 
 SYS_ANGLES = """You are the head of content for an Indian tech Shorts channel.
-For the SOURCE story, propose 3 DISTINCT angles. Each angle is a different reason a viewer
-would care, not a rewording of the same headline. Pick from: verified money/jobs impact on
-an Indian viewer, a change to something they use daily, an important qualification, what
-the source says happens next, or a myth the source can actually disprove. Never manufacture
-urgency, conflict, or a hidden motive.
+For the SOURCE story, propose 3 DISTINCT angles. Each angle is a different, viewer-relevant
+reason to care, not a rewording of the same headline. Prefer verified money/jobs impact, a
+change to something viewers use daily, an important qualification, what the source says
+happens next, or a myth the source can actually disprove. Never manufacture urgency, conflict,
+loss, a hidden motive, or an outcome.
+
+Vary the framing across angles when the source supports it: practical impact, a specific
+number, a useful question, or a surprising but verified qualification. Hooks should be concise
+and concrete, and every claim must be traceable to the SOURCE. Thumbnail text should summarize
+the same factual angle in 2-5 short words without adding a claim.
 
 Return STRICT JSON:
 {"angles": [
-  {"angle_id": "A", "take": "one line, <=14 words, the unique claim of this angle",
-   "hook_idea": "the single most scroll-stopping first sentence, in English",
+  {"angle_id": "A",
+   "take": "one line, <=14 words, the unique PERSONAL claim of this angle",
+   "hook_idea": "the single most scroll-stopping FIRST SENTENCE in English — spoken, punchy, personal, <=10 words",
+   "hook_archetype": "stake | secret | number | question | contrarian | countdown",
+   "thumbnail_text": "2-5 bold words that work on a thumbnail for this angle",
    "key_facts": ["3-5 short facts that appear in the SOURCE. No outside facts."]},
   {"angle_id": "B", ...}, {"angle_id": "C", ...}
 ]}
@@ -96,28 +104,29 @@ Return STRICT JSON:
             "stat": "optional: a number or 2-word claim from the line to show as a big card, e.g. \u20b91,500"}}],
  "search_terms": ["6-8 phrases people really type into YouTube search for this topic: 3-4 in the native script, 3-4 in English"],
  "emphasis": ["up to 8 single words copied exactly from the lines that deserve color"],
- "description": "2 lines in native script. Line 1 carries the main keyword and the hook. Line 2 asks a question.",
- "ig_caption": "hook line, blank line, 2 short lines, a question, blank line, 5 hashtags",
+ "description": "YouTube description — 5 lines in native script:\n   Line 1: hook + main keyword (most important for SEO, 100-120 chars)\n   Line 2: 2-3 supporting keywords naturally embedded in a sentence\n   Line 3: a direct question to drive comments\n   Line 4: source/credit line in English (URL)\n   Line 5: channel CTA + subscribe nudge in native script",
+ "ig_caption": "Instagram caption — 5 parts separated by blank lines:\n   Part 1: hook line (same energy as the video hook, 1-2 sentences, native script)\n   Part 2: 2-3 short punchy lines giving the core value (native script)\n   Part 3: a direct question to drive comments (ends with ?)\n   Part 4: CTA line e.g. '👉 Link in bio' or '🔁 Share this'\n   Part 5: 5-8 hashtags — mix native-language and English, specific before generic",
  "hashtags": ["#shorts", "...5-7 tags, mix of broad and specific, native or English as people search"]
 }}
 
-HOOK (beats[0]) — the entire game lives here:
-- {hook_max_words} words MAX. Spoken in under {hook_max_seconds} seconds. NEVER start with
-  "today" or a greeting.
-- Make a concrete, accurate promise or ask a question the story will answer. Do not inflate
-  the stakes or imply danger not supported by the source.
-- Speak TO them: "మీరు", "आप", using their direct address always.
+HOOK (beats[0]):
+- {hook_max_words} words MAX and under {hook_max_seconds} seconds. Never start with a greeting,
+    brand name, channel name, or "this video".
+- Use the HOOK ARCHETYPE below only when it fits the verified source facts. Ask a clear
+    question or make an accurate promise; do not inflate stakes or imply unsupported danger.
+- Speak to the viewer naturally where appropriate. The 2-5 word hook_text must differ from
+    the spoken line and must not add a claim.
 
 EVIDENCE (middle beats):
-- Give at least three distinct source-backed facts that support the claim.
-- Keep each fact concrete, and make the connection to the claim clear.
+- Give at least three distinct, source-backed facts that support the central claim.
+- Keep each fact concrete, make its connection clear, and avoid rephrasing the same point.
 
 RE-HOOK (middle beat, role="rehook"):
-- Introduce a useful qualification, consequence, or detail that changes how the claim reads.
+- Add a useful qualification, consequence, or detail that changes how the claim reads.
 - Do not manufacture a twist or imply a fact the source does not establish.
 
 PAYOFF (beats[-2], role="payoff"):
-- Explain the practical takeaway and answer the question the hook opened.
+- Answer the question raised by the hook and explain the practical takeaway.
 
 LOOP (beats[-1], role="loop"):
 - Ask a specific, relevant question viewers can answer from their experience or opinion.
@@ -210,12 +219,42 @@ NATIVE WORD PREFERENCES:
 
 
 HOOK_ARCHETYPES = {
-    "stake": "Threaten something the viewer owns: their money, phone, account, job, data.",
-    "secret": "Promise a thing they are being kept from: 'the setting nobody tells you about'.",
-    "number": "Open on one shocking number or amount, then say what it means for them.",
-    "question": "Ask a question they cannot answer yet and badly want to.",
-    "contrarian": "Say the opposite of what they believe, in one line, then prove it.",
-    "countdown": "Urgency: something ends, changes or starts today and they must act.",
+    # Each archetype drives the first beat (hook) AND the hook_text (the 2-5 word card shown huge).
+    # The viewer's finger is on the scroll button during beat 0 — make them flinch.
+    "stake": (
+        "Threaten something the viewer owns right now: money, phone, job, data, account. "
+        "One concrete consequence, present tense. 'Your UPI is being drained' beats 'UPI is unsafe'. "
+        "hook_text = the threatened thing in 2-3 words."
+    ),
+    "secret": (
+        "Promise a hidden fact that changes something they already do. Frame it as: "
+        "'the thing nobody tells you about X'. Must be specific — 'this one setting' "
+        "is weaker than 'the hidden setting in Settings > Privacy that blocks tracking'. "
+        "hook_text = 3-4 words that tease the secret."
+    ),
+    "number": (
+        "Lead with one number so specific and large (or small) that viewers stop. "
+        "Real source number only — never invent. Follow immediately with why that number affects them. "
+        "hook_text = the number + 1 word unit (e.g. '₹47 Crore', '73%', '11 Seconds')."
+    ),
+    "question": (
+        "Ask a question the viewer cannot answer yet and desperately wants to. "
+        "Must be a yes/no or a 'which one' — not a 'what is X' — because curiosity needs a gap. "
+        "Bad: 'What is AI?' Good: 'ఈ ఒక్క AI App మీ salary double చేయగలదా?' "
+        "hook_text = the question compressed to 4-5 words."
+    ),
+    "contrarian": (
+        "State the exact opposite of a common belief in one line, then prove it with the source. "
+        "The claim MUST be in the source — do not manufacture it. "
+        "'Everyone says X but actually Y' pattern. "
+        "hook_text = the contrarian claim in 3-4 words."
+    ),
+    "countdown": (
+        "Real deadline, real consequence. Something ends, changes price, or becomes unavailable. "
+        "Must be sourced — never invent urgency. "
+        "'This offer ends today' is weak; 'Free plan disappears March 15 — migrate now' is strong. "
+        "hook_text = the deadline in 3-4 words (e.g. 'ఇవ్వాళే Last Day')."
+    ),
 }
 
 
@@ -458,6 +497,12 @@ def propose_angles(story, cfg):
 def write_script(story, angle, lcfg, cfg, note="", archetype="stake"):
     """Write the picked angle natively for one channel. Retries feed the exact failure
     back to the model so the second attempt fixes the specific rule that was broken."""
+    # If the angle proposer identified a better archetype, use it
+    effective_archetype = angle.get("hook_archetype") or archetype
+    if effective_archetype not in HOOK_ARCHETYPES:
+        effective_archetype = archetype
+    archetype = effective_archetype
+
     system = SYS_WRITE.format(lang_name=LANG_NAME.get(lcfg["lang"], lcfg["lang"]),
                               style=LANG_STYLE.get(lcfg["lang"], ""),
                               brand=lcfg["brand"], audience=lcfg["audience"].replace("_", " "),
@@ -623,10 +668,56 @@ def _finish(d, lcfg):
         d["title_with_hashtags"] = f"{base_title} {yt_hashtags}"
     else:
         d["title_with_hashtags"] = base_title
-    d.setdefault("description", d["title"])
-    ig_hashtags = lcfg.get("ig_hashtags", " ".join(d["hashtags"][:5]))
-    d.setdefault("ig_caption",
-                 d["title"] + "\n\n" + "\n".join(lines[:2]) + "\n\n" + ig_hashtags)
+    model_desc = str(d.get("description", "")).strip()
+    if len(model_desc) < 80:
+        description_parts = [str(d.get("hook_text") or d["title"]).strip()]
+        keywords = " | ".join(str(term).strip() for term in d.get("search_terms", [])[:3] if term)
+        closing_question = next(
+            (str(beat.get("line", "")).strip() for beat in reversed(d["beats"])
+             if "?" in str(beat.get("line", ""))),
+            "",
+        )
+        if keywords:
+            description_parts.append(keywords)
+        if closing_question:
+            description_parts.append(closing_question)
+        bio_link = str(lcfg.get("bio_link", "")).strip()
+        if bio_link:
+            description_parts.append("More: " + bio_link)
+        cta_description = str(d.get("cta_screen") or lcfg.get("cta", "")).strip()
+        if cta_description:
+            description_parts.append(cta_description)
+        d["description"] = "\n".join(description_parts)
+    else:
+        d["description"] = model_desc
+
+    model_caption = str(d.get("ig_caption", "")).strip()
+    configured_tags = str(lcfg.get("ig_hashtags", "")).split()
+    all_tags = list(dict.fromkeys(configured_tags + d["hashtags"][:5]))
+    all_hashtags = " ".join(all_tags)
+    if len(model_caption) < 60:
+        hook_caption = str(d.get("hook_text") or d["title"]).strip()
+        fact_lines = [str(beat["line"]).strip() for beat in d["beats"][1:4]
+                      if beat.get("role") in ("fact", "rehook")][:2]
+        closing_question = next(
+            (str(beat.get("line", "")).strip() for beat in reversed(d["beats"])
+             if "?" in str(beat.get("line", ""))),
+            "",
+        )
+        caption_parts = [hook_caption, ""]
+        if fact_lines:
+            caption_parts += fact_lines + [""]
+        if closing_question:
+            caption_parts += [closing_question, ""]
+        cta_caption = str(d.get("cta_screen") or "").strip()
+        if cta_caption:
+            caption_parts += [cta_caption, ""]
+        caption_parts.append(all_hashtags)
+        d["ig_caption"] = "\n".join(caption_parts)
+    else:
+        d["ig_caption"] = model_caption
+        if all_hashtags and all_hashtags not in model_caption:
+            d["ig_caption"] += "\n\n" + all_hashtags
     return d
 
 
