@@ -78,18 +78,54 @@ def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=
         status["publishAt"] = slot.astimezone(datetime.timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ")
 
-    desc = script.get("description") or script["script"].split(".")[0].strip()
+    # ── Build a rich description for SEO ─────────────────────────────────────
+    # Use the model's 5-line description; fall back to a constructed one.
+    model_desc = str(script.get("description") or "").strip()
+    if len(model_desc) >= 80:
+        desc_body = model_desc
+    else:
+        # Construct from fields: hook + keywords + closing question + source + CTA
+        hook = str(script.get("hook_text") or script.get("title", "")).strip()
+        kw_line = " | ".join(str(t) for t in script.get("search_terms", [])[:4] if t)
+        closing_q = ""
+        for b in reversed(script.get("beats", [])):
+            if "?" in str(b.get("line", "")):
+                closing_q = str(b["line"]).strip()
+                break
+        cta = str(script.get("cta_screen") or lcfg.get("cta", "")).strip()
+        parts = [hook]
+        if kw_line:
+            parts.append(kw_line)
+        if closing_q:
+            parts.append(closing_q)
+        parts.append(f"Source: {source_url}")
+        if cta:
+            parts.append(cta)
+        desc_body = "\n".join(parts)
+
     tags = script.get("tags") or [h.lstrip("#") for h in script["hashtags"]][:15]
-    # first three hashtags are shown above the title, so lead with the strongest ones
     kw = ", ".join(script.get("search_terms", [])[:6])
     # Use title_with_hashtags if available (2-3 niche hashtags appended inside the title)
-    # Research: hashtags IN the title are clickable and boost discovery
     upload_title = script.get("title_with_hashtags") or script["title"]
+
+    full_description = (
+        f"{desc_body}\n\n"
+        + (f"{kw}\n\n" if kw else "")
+        + f"Source: {source_url}\n\n"
+        + " ".join(script["hashtags"])
+    )
+    # Deduplicate the source line if it's already in desc_body
+    if f"Source: {source_url}" in desc_body:
+        full_description = (
+            f"{desc_body}\n\n"
+            + (f"{kw}\n\n" if kw else "")
+            + " ".join(script["hashtags"])
+        )
+
     body = {
         "snippet": {
             "title": upload_title[:100],
-            "description": f"{desc}\n\n" + (f"{kw}\n\n" if kw else "") +
-                           f"Source: {source_url}\n\n{' '.join(script['hashtags'])}",
+            "description": full_description[:5000],
             "tags": tags,
             "categoryId": "28",
             "defaultLanguage": lcfg["lang"],

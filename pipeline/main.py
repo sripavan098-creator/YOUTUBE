@@ -285,7 +285,7 @@ def morning(slot_offset: int = 0):
                 if final_mp3 != mp3:
                     mp3 = pathlib.Path(final_mp3)
                 langfix.audio_gate(str(mp3), script["script"], lcfg["lang"])
-                video, thumbnail = render.render(sid, channel, lcfg, script, str(mp3), str(wj),
+                video, thumbnail, ig_cover = render.render(sid, channel, lcfg, script, str(mp3), str(wj),
                                                 duration, shots, layout, beats=beats)
                 # Persist the generated metadata next to the mp4 so a later batch
                 # upload can reuse it instead of guessing from the filename.
@@ -377,14 +377,16 @@ def pump_ig():
     now = datetime.datetime.now().isoformat(timespec="seconds")
     for row_id, sid, channel, path, caption in db.due_ig(now):
         try:
-            # Pass pre-extracted thumbnail if it exists next to the mp4
-            thumb_path = pathlib.Path(path).with_suffix("") \
-                             .parent / (pathlib.Path(path).stem + "_thumb.jpg")
-            # Also try the standard naming convention from render.py
-            if not thumb_path.exists():
-                out_dir = ROOT / "out"
-                thumb_path = out_dir / f"{sid}_{channel}_thumb.jpg"
-            thumbnail = str(thumb_path) if thumb_path.exists() else None
+            out_dir = ROOT / "out"
+            # Prefer the designed IG cover (1080×1920) for Instagram
+            ig_cover_path = out_dir / f"{sid}_{channel}_ig_cover.jpg"
+            yt_thumb_path = out_dir / f"{sid}_{channel}_thumb.jpg"
+            if ig_cover_path.exists():
+                thumbnail = str(ig_cover_path)
+            elif yt_thumb_path.exists():
+                thumbnail = str(yt_thumb_path)
+            else:
+                thumbnail = None
             publish_ig.publish(channel, path, caption, f"{sid}_{channel}.mp4",
                                thumbnail=thumbnail)
             db.mark_ig(row_id, "done")

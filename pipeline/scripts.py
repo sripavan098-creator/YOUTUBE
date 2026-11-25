@@ -40,29 +40,42 @@ STORY_FORMATS = {"explainer", "list", "versus", "timeline"}
 SYS_ANGLES = """You are the head of content for an Indian tech Shorts channel with 10M subscribers.
 Your job: turn a dry tech story into 3 DISTINCT angles that make a viewer's thumb stop.
 
-For the SOURCE story, propose 3 angles. Each angle must:
-1. Threaten, surprise or empower the viewer differently — not three rewordings of the headline
-2. Have a concrete, specific hook_idea that works as a spoken first sentence
-3. Use only facts traceable to the SOURCE — never invent stakes, quotes or outcomes
+VIRAL HOOK FORMULA: The hook must do ONE of these things in its first sentence:
+  A) Make the viewer scared they're LOSING something (money, job, privacy, speed)
+  B) Make them feel they know a SECRET others don't
+  C) Hit them with a NUMBER so specific it demands an explanation
+  D) Ask a YES/NO question they don't know the answer to
+  E) Flip a belief they've held for years
+  F) Create FOMO with a real deadline
 
-Good angles to try:
-- Direct money/job/data impact on an Indian viewer TODAY
-- A change to something they use daily (UPI, WhatsApp, Android, Jio)
-- A number so specific or large it makes you stop (₹500Cr, 73%, 11 seconds)
-- The opposite of what most people believe (backed by the source)
-- A hidden thing / setting / fact most people don't know
+For the SOURCE story, propose 3 DISTINCT angles. Each must:
+1. Use a DIFFERENT viral formula from the list above
+2. Have a concrete hook_idea that works as a spoken first sentence under 10 words
+3. Use only facts traceable to the SOURCE — never invent stakes, quotes or outcomes
+4. Target an Indian viewer's daily life (UPI, Jio, WhatsApp, Android, job, money)
+
+THUMBNAIL TEXT: Each angle's hook_idea should ALSO work as 2-5 words on a thumbnail.
+Think: would this make someone stop scrolling if they saw it on a black background?
+
+Strong examples:
+  ✓ "Your Aadhaar was just accessed 4 times today" (stake, specific, personal)
+  ✓ "This free app saved me ₹18,000 last month" (secret + number)
+  ✓ "ChatGPT will kill THIS type of job by December" (countdown + threat)
+  ✓ "India's biggest startup just went broke — here's the sign you missed" (contrarian)
 
 Weak angles to avoid:
-- Generic "big news in tech" angles without a personal stake
-- Repeating the headline as the hook idea
-- Manufactured conflict or danger not in the source
+  ✗ "Big news in AI" — no personal stake
+  ✗ Repeating the headline
+  ✗ Manufactured danger not in the source
+  ✗ Passive framing ("it has been announced that...")
 
 Return STRICT JSON:
 {"angles": [
   {"angle_id": "A",
-   "take": "one line, <=14 words, the unique claim of this angle",
-   "hook_idea": "the single most scroll-stopping FIRST SENTENCE in English — spoken, punchy, personal",
+   "take": "one line, <=14 words, the unique PERSONAL claim of this angle",
+   "hook_idea": "the single most scroll-stopping FIRST SENTENCE in English — spoken, punchy, personal, <=10 words",
    "hook_archetype": "stake | secret | number | question | contrarian | countdown",
+   "thumbnail_text": "2-5 bold words that work on a thumbnail for this angle",
    "key_facts": ["3-5 short facts that appear in the SOURCE. No outside facts."]},
   {"angle_id": "B", ...}, {"angle_id": "C", ...}
 ]}
@@ -110,8 +123,8 @@ Return STRICT JSON:
             "stat": "optional: a number or 2-word claim from the line to show as a big card, e.g. \u20b91,500"}}],
  "search_terms": ["6-8 phrases people really type into YouTube search for this topic: 3-4 in the native script, 3-4 in English"],
  "emphasis": ["up to 8 single words copied exactly from the lines that deserve color"],
- "description": "2 lines in native script. Line 1 carries the main keyword and the hook. Line 2 asks a question.",
- "ig_caption": "hook line, blank line, 2 short lines, a question, blank line, 5 hashtags",
+ "description": "YouTube description — 5 lines in native script:\n   Line 1: hook + main keyword (most important for SEO, 100-120 chars)\n   Line 2: 2-3 supporting keywords naturally embedded in a sentence\n   Line 3: a direct question to drive comments\n   Line 4: source/credit line in English (URL)\n   Line 5: channel CTA + subscribe nudge in native script",
+ "ig_caption": "Instagram caption — 5 parts separated by blank lines:\n   Part 1: hook line (same energy as the video hook, 1-2 sentences, native script)\n   Part 2: 2-3 short punchy lines giving the core value (native script)\n   Part 3: a direct question to drive comments (ends with ?)\n   Part 4: CTA line e.g. '👉 Link in bio' or '🔁 Share this'\n   Part 5: 5-8 hashtags — mix native-language and English, specific before generic",
  "hashtags": ["#shorts", "...5-7 tags, mix of broad and specific, native or English as people search"]
 }}
 
@@ -685,20 +698,55 @@ def _finish(d, lcfg):
     else:
         d[“title_with_hashtags”] = base_title
 
-    d.setdefault(“description”, d[“title”])
-    # Instagram caption: hook line + hashtags including channel-specific ones.
-    # titles.harden() will OVERWRITE this with the viral-optimised version;
-    # this default exists only as a fallback if harden() is not called.
-    ig_hashtags = lcfg.get(“ig_hashtags”, “ “.join(d[“hashtags”][:5]))
-    hook_line = str(d.get(“hook_text”, “”) or d[“title”]).strip()
-    closing_q = next((str(b.get(“line”, “”)).strip() for b in reversed(beats)
-                      if “?” in b.get(“line”, “”)), “”)
-    cta_line = str(d.get(“cta_screen”, “”) or d[“title”]).strip()
-    ig_parts = [hook_line]
-    if closing_q:
-        ig_parts += [“”, closing_q]
-    ig_parts += [“”, f”👉 {cta_line}”, “”, ig_hashtags]
-    d.setdefault(“ig_caption”, “\n”.join(ig_parts))
+    # ── YouTube description: SEO-rich 5-line template ───────────────────────
+    # Only build our own if the model gave something too short
+    model_desc = str(d.get(“description”, “”)).strip()
+    if len(model_desc) < 80:
+        hook_line_desc = str(d.get(“hook_text”, “”) or d[“title”]).strip()
+        kw_line = “ | “.join(str(t).strip() for t in d.get(“search_terms”, [])[:3] if t)
+        closing_q_desc = next((str(b.get(“line”, “”)).strip() for b in reversed(beats)
+                                if “?” in b.get(“line”, “”)), “”)
+        bio_link = lcfg.get(“bio_link”, “”)
+        cta_desc = str(d.get(“cta_screen”, “”) or lcfg.get(“cta”, “”)).strip()
+        desc_parts = [hook_line_desc]
+        if kw_line:
+            desc_parts.append(kw_line)
+        if closing_q_desc:
+            desc_parts.append(closing_q_desc)
+        if bio_link:
+            desc_parts.append(f”More: {bio_link}”)
+        if cta_desc:
+            desc_parts.append(cta_desc)
+        d[“description”] = “\n”.join(desc_parts)
+    else:
+        d[“description”] = model_desc
+
+    # ── Instagram caption: viral 5-part structure ────────────────────────────
+    # Only build our own if the model gave something weak
+    model_ig = str(d.get(“ig_caption”, “”)).strip()
+    ig_hashtags_cfg = lcfg.get(“ig_hashtags”, “”)
+    all_hashtags = “ “.join(d[“hashtags”][:5])
+    if ig_hashtags_cfg:
+        all_hashtags = ig_hashtags_cfg + “ “ + all_hashtags
+
+    if len(model_ig) < 60:
+        hook_ig = str(d.get(“hook_text”, “”) or d[“title”]).strip()
+        # Pick 2 short fact lines from the middle beats
+        fact_lines = [str(b[“line”]).strip() for b in beats[1:4]
+                      if b.get(“role”) in (“fact”, “rehook”)][:2]
+        closing_q_ig = next((str(b.get(“line”, “”)).strip() for b in reversed(beats)
+                              if “?” in b.get(“line”, “”)), “”)
+        ig_parts = [hook_ig, “”]
+        if fact_lines:
+            ig_parts += fact_lines + [“”]
+        if closing_q_ig:
+            ig_parts += [closing_q_ig, “”]
+        ig_parts += [f”👉 {str(d.get('cta_screen','Follow us')).strip()}”, “”, all_hashtags]
+        d[“ig_caption”] = “\n”.join(ig_parts)
+    else:
+        # Ensure hashtags are appended even if the model skipped them
+        if all_hashtags and all_hashtags not in model_ig:
+            d[“ig_caption”] = model_ig + “\n\n” + all_hashtags
     return d
 
 

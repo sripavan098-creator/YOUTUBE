@@ -243,23 +243,28 @@ def render(sid, channel, lcfg, script, mp3, words_json, duration, shot_paths, la
     if not out.exists() or out.stat().st_size == 0:
         raise RuntimeError(f"render produced no output for {sid}/{channel}")
 
-    # ── Thumbnail: grab a visually-rich frame at ~0.5 s ──────────────────────
-    # YouTube shows this as the default thumbnail if none is uploaded.
-    # We always extract and pass it to the uploader so it looks intentional.
-    thumb = ROOT / "out" / f"{sid}_{channel}_thumb.jpg"
+    # ── Thumbnails: designed card via thumbnail.py (falls back to ffmpeg) ───
     try:
-        # Seek to 0.5 s (hook card is visible → strong first impression)
-        subprocess.run(
-            ["ffmpeg", "-v", "error", "-y", "-ss", "0.5", "-i", str(out),
-             "-frames:v", "1", "-q:v", "2",
-             "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
-                    "pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black",
-             str(thumb)],
-            check=True, timeout=30,
-        )
-        print(f"  [thumb] generated {thumb.name}", flush=True)
+        from pipeline.thumbnail import make_thumbnails
+        yt_thumb, ig_cover = make_thumbnails(sid, channel, lcfg, script, str(out))
     except Exception as e:
-        print(f"  [thumb] WARNING: could not extract thumbnail: {e}", flush=True)
-        thumb = None
+        print(f"  [thumb] thumbnail.py error ({e}), falling back to ffmpeg", flush=True)
+        yt_thumb, ig_cover = None, None
 
-    return str(out), str(thumb) if thumb and thumb.exists() else None
+    # Hard ffmpeg fallback if everything else failed
+    if not yt_thumb:
+        thumb_path = ROOT / "out" / f"{sid}_{channel}_thumb.jpg"
+        try:
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-y", "-ss", "0.5", "-i", str(out),
+                 "-frames:v", "1", "-q:v", "2",
+                 "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
+                        "pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black",
+                 str(thumb_path)],
+                check=True, timeout=30,
+            )
+            yt_thumb = str(thumb_path)
+        except Exception as e:
+            print(f"  [thumb] WARNING: ffmpeg fallback also failed: {e}", flush=True)
+
+    return str(out), yt_thumb, ig_cover
