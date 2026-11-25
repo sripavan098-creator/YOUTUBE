@@ -48,6 +48,16 @@ ROLE_SETTINGS = {
     "loop":    {"pace": 1.00, "temperature": 0.70},
 }
 
+
+def _voice_for(lang: str, voice_id: str = None) -> str:
+    """Prefer a per-language configured or cloned voice over the built-in default."""
+    return (
+        voice_id
+        or os.environ.get(f"SARVAM_VOICE_{lang.upper()}", "").strip()
+        or DEFAULT_VOICES.get(lang, "ritu_hi_conversation")
+    )
+
+
 # Cache file for cloned voice IDs so we don't re-create every run
 _CACHE_FILE = pathlib.Path(__file__).resolve().parent.parent / "out" / "sarvam_voice_cache.json"
 
@@ -117,7 +127,7 @@ def synth_sarvam(
     lang: str,
     wav_out: str,
     voice_id: str = None,
-    pace: float = 1.10,
+    pace: float = 1.15,
     temperature: float = 0.75,
     attempts: int = 3,
 ) -> float:
@@ -125,12 +135,12 @@ def synth_sarvam(
 
     - voice_id: a cloned voice_id from register_voice(), or None to use the default
       built-in Sarvam voice for the channel language.
-    - pace: 0.5-2.0; 1.10 is slightly faster than neutral — natural for Shorts.
+    - pace: 0.5-2.0; 1.15 is slightly faster than neutral — natural for Shorts.
     - temperature: 0.5-1.0; higher = more expressive. 0.75 for Hindi, 0.65 for Telugu.
     - enable_preprocessing=True: Sarvam reads numbers, symbols and English words naturally.
     """
     lang_code = LANG_CODE.get(lang, "en-IN")
-    voice = voice_id or DEFAULT_VOICES.get(lang, "ritu_hi_reels")
+    voice = _voice_for(lang, voice_id)
 
     last = None
     for i in range(attempts):

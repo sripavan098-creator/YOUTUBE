@@ -20,6 +20,7 @@ python -m pipeline.main --now # one batch: 8 Shorts -> out/
 | Command | What it does |
 |---|---|
 | `python -m pipeline.main --now` | One morning batch (fetch, angles, review, render, upload) |
+| `python -m pipeline.main --now --only te` | Generate only Telugu for this batch; other runs are unchanged |
 | `python -m pipeline.main --ig` | Post any Reels whose slot has arrived |
 | `python -m pipeline.main --longform` | Build the weekly long-form for each channel |
 | `python -m pipeline.main --replay` | Promote the private backlog after the API audit clears |
@@ -133,7 +134,7 @@ is also verified by doing the real thing:
 | `remotion/src/layouts/` | The four Short compositions |
 
 ## v4 (viral engine)
-- **Voice**: every beat is voiced separately with its own mood (shock/urgent/curious/calm/serious), silence trimmed using exact word timings, deliberate pauses before re-hooks and payoffs. Beat cut times are exact.
+- **Voice**: every beat is voiced separately with its own mood (shock/urgent/curious/calm/serious), silence trimmed using exact word timings, deliberate pauses before re-hooks and payoffs. Beat cut times are exact. The beat voice engine honors `SARVAM_VOICE_TE` and `SARVAM_VOICE_HI`; configured voices override built-in defaults, while a cloned `SARVAM_VOICE_SAMPLE` takes precedence.
 - **Sound**: broadcast voice chain (80 Hz HPF, +2 dB warmth, +2.5 dB presence, compression, -14 LUFS); procedural impact / riser / whoosh / pop placed by beat role; generated music bed that ducks under speech. Drop files in `assets/sfx/<kind>.wav` or `assets/music/` to override.
 - **Screen**: flash cuts, re-framing every 2.6 s, impact shake, grade + vignette + grain, hook slam with RGB glitch, kinetic keyword slam, stat cards, mid-video follow nudge, poster scenes when no photo is found. Telugu/Devanagari fonts are bundled (`npm install` in `remotion/`).
 - **Content/SEO**: consistent script limits (6-9 beats, 50-80 words, 6-word/2.8-second hook), a source-backed claim with three supporting facts, topic-specific CTAs, channel editorial identities, hook archetypes, search phrases, and topic de-duplication.

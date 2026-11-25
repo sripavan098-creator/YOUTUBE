@@ -6,4 +6,4 @@ source venv/bin/activate
 # Run the pipeline (it will auto-approve Telegram after 5s)
 python -m pipeline.main --now
 
-echo "✅ Daily run complete! Videos are in the out/ folder and uploaded."
+echo "✅ Daily run finished. Check pipeline output for story/upload failures; YouTube visibility follows config.yaml."

@@ -70,6 +70,10 @@ def _clean_dict(script):
 
 CFG = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 
+from pipeline import ig_once as _ig_once  # noqa: E402
+_ig_once.install(db, publish_ig)
+
+
 # Angle generation costs one LLM call per story, so generate for a wider pool than we
 # need: skipped or failed stories must not leave a channel short of its 4 videos.
 ANGLE_POOL = 4
@@ -175,22 +179,41 @@ def _repeats_recent(channel, story, threshold=0.6):
     return False
 
 
-def morning(slot_offset: int = 0):
-    """Run one production batch per channel.
+def _channel_filter_from_args(args):
+    raw = None
+    for index, arg in enumerate(args):
+        if arg == "--only":
+            if index + 1 >= len(args) or args[index + 1].startswith("--"):
+                raise SystemExit("--only requires a comma-separated channel list (for example: te)")
+            raw = args[index + 1]
+            break
+        if arg.startswith("--only="):
+            raw = arg.split("=", 1)[1]
+            break
+    if raw is None:
+        return None
+    channels = {channel.strip() for channel in raw.split(",") if channel.strip()}
+    if not channels:
+        raise SystemExit("--only requires at least one channel")
+    unknown = channels - CFG["channels"].keys()
+    if unknown:
+        raise SystemExit("unknown channel selection: " + ", ".join(sorted(unknown)))
+    return channels
+
+
+def morning(slot_offset: int = 0, only_channels=None):
+    """Run one production batch, optionally restricted to selected channels.
 
     publish_yt._slot() maps (slot_offset + i) % num_configured_slots to one of
     yt_start / yt_start_2 / yt_start_3 / yt_start_4.
 
-    4-slot schedule (shorts_per_day=4):
-      batch 0  slot_offset=0  → yt_start   08:30
-      batch 1  slot_offset=1  → yt_start_2 13:00
-      batch 2  slot_offset=2  → yt_start_3 18:00
-      batch 3  slot_offset=3  → yt_start_4 21:00
-
-    With 2 channels × 4 slots = 8 YT Shorts per day → 240 in 30 days.
+    With 2 channels x 4 slots = 8 YT Shorts per day -> 240 in 30 days.
     """
     day = datetime.date.today().isoformat()
-    channels = CFG["channels"]
+    channels = {
+        channel: settings for channel, settings in CFG["channels"].items()
+        if only_channels is None or channel in only_channels
+    }
     langs = [c["lang"] for c in channels.values()]
 
     trend_items = trends.fetch_all(CFG) if CFG.get("trends", True) else []
@@ -386,7 +409,7 @@ def pump_ig():
 
 def main():
     if "--now" in sys.argv:
-        morning()
+        morning(only_channels=_channel_filter_from_args(sys.argv[1:]))
     elif "--evening" in sys.argv or "--batch1" in sys.argv:
         batch1()
     elif "--batch2" in sys.argv:

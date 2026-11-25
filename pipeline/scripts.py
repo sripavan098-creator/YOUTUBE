@@ -75,8 +75,9 @@ stakes, force shock, or repeat the same point to fill time.
 
 LANGUAGE (the most important rule):
 {style}
-Every line must be written ONLY in the native script. No Latin letters at all. Product and
-company names are written the way people say them, in native script.
+Write primarily in the native script, but keep technical terms, acronyms, and brand names
+in Latin exactly as commonly written (for example: FSSAI, Bromate, AI, Google). Do not
+invent native-script spellings for English technical terms.
 
 Return STRICT JSON:
 {{
@@ -632,8 +633,9 @@ def _finish(d, lcfg):
 SYS_POLISH = """You are a careful editor for {lang_name} Shorts. Below is a draft script as
 JSON. Improve ONLY the wording of the "line" fields for clarity and natural delivery.
 Keep: claim, supporting_facts, the same number of beats, the same facts,
-roles/moods/shots/slam/stat fields, story_format, cta_text, native script only
-(no Latin letters), hook <= {hook_max_words} words, and a closing question. Do not add facts.
+roles/moods/shots/slam/stat fields, story_format, cta_text, and the original language.
+Keep standard technical terms, acronyms, and brand names in Latin. Hook <= {hook_max_words}
+words, and a closing question. Do not add facts.
 Return the FULL JSON again with the same keys. ONLY raw JSON."""
 
 
