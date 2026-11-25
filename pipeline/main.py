@@ -39,7 +39,8 @@ sys.path.insert(0, str(ROOT))
 load_dotenv(ROOT / ".env")
 
 from pipeline import (audio, db, publish_ig, publish_yt, refresh_ig, render, review,  # noqa: E402
-                      learn, scripts, sources, timing, trends, visuals, voice, longform)
+                      learn, scripts, sources, timing, trends, visuals, voice, longform,
+                      langfix, motion)
 
 def _clean_dict(script):
     """Bulletproof sanitizer: Nukes ALL control characters from metadata."""
@@ -72,7 +73,6 @@ CFG = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 # Angle generation costs one LLM call per story, so generate for a wider pool than we
 # need: skipped or failed stories must not leave a channel short of its 4 videos.
 ANGLE_POOL = 4
-HOOK_MAX_SEC = 3.4  # spoken hook must end by here (3 s window + TTS lead-in)
 
 # Slot offset per batch:
 # batch 0 (morning)   → slot_offset=0  → yt_start   (08:30)
@@ -119,9 +119,10 @@ def _assign(picked, channels):
         audience = channels[ch]["audience"]
         def fit(item):
             story, _ = item
+            relevance = story.get("channel_scores", {}).get(ch, 0)
             if audience == "south_india":
-                return (story.get("fits_south", False), story["score"])
-            return (story.get("fits_india", False), story["score"])
+                return (story.get("fits_south", False), relevance, story["score"])
+            return (story.get("fits_india", False), relevance, story["score"])
         for story, angles in sorted(picked, key=fit, reverse=True):
             if len(assigned[ch]) >= per:
                 break
@@ -193,7 +194,7 @@ def morning(slot_offset: int = 0):
     langs = [c["lang"] for c in channels.values()]
 
     trend_items = trends.fetch_all(CFG) if CFG.get("trends", True) else []
-    fresh = [s for s in sources.top_stories(20, trend_items=trend_items)
+    fresh = [s for s in sources.top_stories(20, trend_items=trend_items, channels=channels)
              if not any(db.seen(ch, s["url"]) for ch in channels)
              and not all(_repeats_recent(ch, s) for ch in channels)]
     if not fresh:
@@ -233,13 +234,10 @@ def morning(slot_offset: int = 0):
             angle = _angle_for(channel, channels, chosen, all_angles[story["url"]],
                                shared=takes[story["url"]] > 1)
             sid = db.add_story(day, channel, story["url"], story["title"], story["body"])
-            layout = scripts.pick_layout(recent, CFG["layouts"])
-            recent.append(layout)
             try:
                 # Stage 2: write the picked angle natively for THIS channel, then voice it.
-                # The spoken hook must land inside ~3 s, the window in which people decide
-                # to swipe. TTS length can only be known after synthesis, so if the hook runs
-                # long the script is rewritten once with that exact measurement.
+                # The spoken hook must land within 2.8 s. TTS length can only be known after
+                # synthesis, so an overlong hook is rewritten once using its measured length.
                 (ROOT / "out").mkdir(exist_ok=True)
                 raw_mp3 = ROOT / "out" / f"{sid}_{channel}.raw.mp3"
                 mp3 = ROOT / "out" / f"{sid}_{channel}.mp3"
@@ -256,14 +254,20 @@ def morning(slot_offset: int = 0):
                         script["beats"], lcfg, ROOT / "out" / f"vo_{sid}_{channel}", raw_mp3)
                     wj.write_text(json.dumps(words, ensure_ascii=False), encoding="utf-8")
                     hook_s = beats[0][1] - _gap_after_hook(script)
-                    if hook_s <= HOOK_MAX_SEC or attempt == 1:
-                        if hook_s > HOOK_MAX_SEC:
-                            print(f"  hook still {hook_s:.1f}s after rewrite; keeping it")
+                    if hook_s <= scripts.HOOK_MAX_SECONDS:
                         break
-                    note = (f"Your first line took {hook_s:.1f} seconds to speak. It must be "
-                            f"under 3. Rewrite the whole script with a hook of at most 6 short "
-                            f"words that states the stake immediately.")
+                    if attempt == 1:
+                        raise RuntimeError(
+                            f"hook is {hook_s:.2f}s after rewrite "
+                            f"(maximum {scripts.HOOK_MAX_SECONDS}s)"
+                        )
+                    note = (f"Your first line took {hook_s:.2f} seconds to speak. Rewrite "
+                            f"the script with a hook of at most {scripts.HOOK_MAX_WORDS} "
+                            f"short words that fits within {scripts.HOOK_MAX_SECONDS} seconds.")
                     print(f"  hook {hook_s:.1f}s too slow, rewriting once")
+                layout = scripts.pick_layout(recent, CFG["layouts"],
+                                              preferred=script.get("story_format"))
+                recent.append(layout)
                 shots = visuals.fetch_shots(script["shots"], ROOT / "out" / f"shots_{sid}_{channel}")
                 starts = [s for s, _ in beats]
                 cues = audio.default_cues(starts, [b["role"] for b in script["beats"]])
@@ -273,8 +277,16 @@ def morning(slot_offset: int = 0):
                 duration = audio.finish(raw_mp3, mp3, starts, duration,
                                         sfx=CFG.get("sfx", True),
                                         music_volume=CFG.get("music_volume", 0.16), cues=cues)
-                video = render.render(sid, channel, lcfg, script, str(mp3), str(wj),
-                                      duration, shots, layout, beats=beats)
+                enhanced_mp3 = ROOT / "out" / f"{sid}_{channel}.enhanced.mp3"
+                final_mp3 = motion.enhance_audio(
+                    mp3, starts, enhanced_mp3,
+                    music_dir=str(ROOT / "assets" / "music"),
+                )
+                if final_mp3 != mp3:
+                    mp3 = pathlib.Path(final_mp3)
+                langfix.audio_gate(str(mp3), script["script"], lcfg["lang"])
+                video, thumbnail, ig_cover = render.render(sid, channel, lcfg, script, str(mp3), str(wj),
+                                                duration, shots, layout, beats=beats)
                 # Persist the generated metadata next to the mp4 so a later batch
                 # upload can reuse it instead of guessing from the filename.
                 (ROOT / "out" / f"{sid}_{channel}.meta.json").write_text(
@@ -282,13 +294,16 @@ def morning(slot_offset: int = 0):
                                 "description": script.get("description") or script["script"].split(".")[0],
                                 "hashtags": script["hashtags"], "tags": script.get("tags", []),
                                 "search_terms": script.get("search_terms", []),
-                                "archetype": archetype}, ensure_ascii=False),
+                                "archetype": archetype,
+                                "story_format": script.get("story_format", "explainer")},
+                       ensure_ascii=False),
                     encoding="utf-8")
                 try:
                     vid_id, slot, privacy = publish_yt.upload(
                         channel, lcfg, CFG["yt_step_min"], slot_offset + i,
                         _clean_dict(script), video,
-                        story["url"], CFG.get("yt_public_after_audit", False))
+                        story["url"], CFG.get("yt_public_after_audit", False),
+                        thumbnail=thumbnail)
                     print(f"YT {channel} {vid_id} {privacy} {slot}")
                     # upload_batch.py checks this marker so it never uploads the same render twice
                     (ROOT / "out" / f"{sid}_{channel}.uploaded.json").write_text(
@@ -362,7 +377,18 @@ def pump_ig():
     now = datetime.datetime.now().isoformat(timespec="seconds")
     for row_id, sid, channel, path, caption in db.due_ig(now):
         try:
-            publish_ig.publish(channel, path, caption, f"{sid}_{channel}.mp4")
+            out_dir = ROOT / "out"
+            # Prefer the designed IG cover (1080×1920) for Instagram
+            ig_cover_path = out_dir / f"{sid}_{channel}_ig_cover.jpg"
+            yt_thumb_path = out_dir / f"{sid}_{channel}_thumb.jpg"
+            if ig_cover_path.exists():
+                thumbnail = str(ig_cover_path)
+            elif yt_thumb_path.exists():
+                thumbnail = str(yt_thumb_path)
+            else:
+                thumbnail = None
+            publish_ig.publish(channel, path, caption, f"{sid}_{channel}.mp4",
+                               thumbnail=thumbnail)
             db.mark_ig(row_id, "done")
             print(f"IG posted story {sid} on {channel}")
         except Exception as e:

@@ -16,20 +16,66 @@ import time
 import requests
 from openai import APIStatusError, OpenAI
 
+from pipeline import retention as R
+from pipeline import langfix as L
+from pipeline.provider_keys import gemini_keys, groq_keys
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+# Script constraints are shared by the prompt, validator, and render retry.
+HOOK_MAX_WORDS = R.MAX_HOOK_WORDS
+HOOK_MAX_SECONDS = R.MAX_HOOK_SEC
+HOOK_CARD_MIN_WORDS = 2
+HOOK_CARD_MAX_WORDS = 5
+BEAT_MIN_WORDS = 5
+BEAT_MAX_WORDS = R.MAX_BEAT_WORDS
+MIN_BEATS = 6
+MAX_BEATS = 9
+SCRIPT_MIN_WORDS = R.TOTAL_WORDS[0]
+SCRIPT_MAX_WORDS = R.TOTAL_WORDS[1]
+STORY_FORMATS = {"explainer", "list", "versus", "timeline"}
 
 # ---------------------------------------------------------------- stage 1: angles
 
-SYS_ANGLES = """You are the head of content for a viral Indian tech Shorts channel.
-For the SOURCE story, propose 3 DISTINCT angles. Each angle is a different reason a viewer
-would care, not a rewording of the same headline. Pick from: money/jobs impact on an
-Indian viewer, 'this changes what you use daily', hidden catch / what they are not telling
-you, David-vs-Goliath, 'what happens next' prediction, myth-busting.
+SYS_ANGLES = """You are the head of content for an Indian tech Shorts channel with 10M subscribers.
+Your job: turn a dry tech story into 3 DISTINCT angles that make a viewer's thumb stop.
+
+VIRAL HOOK FORMULA: The hook must do ONE of these things in its first sentence:
+  A) Make the viewer scared they're LOSING something (money, job, privacy, speed)
+  B) Make them feel they know a SECRET others don't
+  C) Hit them with a NUMBER so specific it demands an explanation
+  D) Ask a YES/NO question they don't know the answer to
+  E) Flip a belief they've held for years
+  F) Create FOMO with a real deadline
+
+For the SOURCE story, propose 3 DISTINCT angles. Each must:
+1. Use a DIFFERENT viral formula from the list above
+2. Have a concrete hook_idea that works as a spoken first sentence under 10 words
+3. Use only facts traceable to the SOURCE — never invent stakes, quotes or outcomes
+4. Target an Indian viewer's daily life (UPI, Jio, WhatsApp, Android, job, money)
+
+THUMBNAIL TEXT: Each angle's hook_idea should ALSO work as 2-5 words on a thumbnail.
+Think: would this make someone stop scrolling if they saw it on a black background?
+
+Strong examples:
+  ✓ "Your Aadhaar was just accessed 4 times today" (stake, specific, personal)
+  ✓ "This free app saved me ₹18,000 last month" (secret + number)
+  ✓ "ChatGPT will kill THIS type of job by December" (countdown + threat)
+  ✓ "India's biggest startup just went broke — here's the sign you missed" (contrarian)
+
+Weak angles to avoid:
+  ✗ "Big news in AI" — no personal stake
+  ✗ Repeating the headline
+  ✗ Manufactured danger not in the source
+  ✗ Passive framing ("it has been announced that...")
 
 Return STRICT JSON:
 {"angles": [
-  {"angle_id": "A", "take": "one line, <=14 words, the unique claim of this angle",
-   "hook_idea": "the single most scroll-stopping first sentence, in English",
+  {"angle_id": "A",
+   "take": "one line, <=14 words, the unique PERSONAL claim of this angle",
+   "hook_idea": "the single most scroll-stopping FIRST SENTENCE in English — spoken, punchy, personal, <=10 words",
+   "hook_archetype": "stake | secret | number | question | contrarian | countdown",
+   "thumbnail_text": "2-5 bold words that work on a thumbnail for this angle",
    "key_facts": ["3-5 short facts that appear in the SOURCE. No outside facts."]},
   {"angle_id": "B", ...}, {"angle_id": "C", ...}
 ]}
@@ -40,24 +86,20 @@ Return ONLY raw JSON. No markdown, no code fences."""
 
 # ---------------------------------------------------------------- stage 2: script
 
-SYS_WRITE = """You are a {lang_name} YouTuber with 1 million subscribers on Shorts.
-Every video you make gets 60-80% watch-through because you understand one rule:
-VIEWERS SWIPE IN 2 SECONDS. If you don't grab them instantly with a real stake —
-something that threatens their money, job, phone, or social standing — they're gone.
+SYS_WRITE = """You are a {lang_name} YouTuber who makes useful, engaging Shorts. Viewers decide quickly
+whether to stay, so open with a specific, factual reason to care rather than manufactured
+shock or urgency.
 
 You THINK in {lang_name}. You never translate from English. You speak like a friend
-who just found out shocking news and can't stop talking about it.
+explaining something genuinely interesting to another person.
 
 Channel: "{brand}". Audience: {audience}.
+Editorial identity: {editorial_identity}
 
-THE VIRAL TIMING LAW (non-negotiable):
-Every beat must add a NEW emotion or reveal — curiosity → shock → tension → surprise → payoff.
-No two beats feel the same. This is what creates the irresistible urge to watch to the end.
-  0–3s   → HOOK: Stop the scroll. One brutal, specific stake.
-  3–12s  → TENSION: Raise discomfort. The fact that makes it real.
-  12–22s → ESCALATION: The detail they didn't expect. The catch. The twist.
-  22–30s → PAYOFF: The emotional release. Close the loop the hook opened.
-  30s+   → LOOP: Question that makes them replay OR comment immediately.
+STORY STRUCTURE:
+Build one clear claim, support it with three distinct facts from the source, then explain
+what those facts mean. The payoff must answer the question raised by the hook. Do not invent
+stakes, force shock, or repeat the same point to fill time.
 
 LANGUAGE (the most important rule):
 {style}
@@ -68,7 +110,12 @@ Return STRICT JSON:
 {{
  "title": "<=60 chars, native script, a curiosity gap or a concrete stake, never a summary.
            If a TRENDING_SEARCH is given and fits, include it the way people type it.",
- "hook_text": "2-5 native words shown huge on screen in the first 2 seconds",
+ "claim": "the video's single, concise, source-backed claim",
+ "supporting_facts": ["three distinct concise facts from KEY_FACTS that support the claim"],
+ "hook_text": "{hook_card_min_words}-{hook_card_max_words} native words shown huge on screen",
+ "story_format": "explainer | list | versus | timeline",
+ "cta_text": "a brief, topic-specific native-language question or invitation to share an experience",
+ "cta_screen": "<=9 words, concrete asset plus channel follow reason",
  "beats": [{{"line": "one spoken sentence", "shot": "2-3 English words for a photo search",
             "role": "hook | fact | rehook | payoff | loop",
             "mood": "shock | urgent | excited | curious | calm | serious (how it is SPOKEN)",
@@ -76,55 +123,63 @@ Return STRICT JSON:
             "stat": "optional: a number or 2-word claim from the line to show as a big card, e.g. \u20b91,500"}}],
  "search_terms": ["6-8 phrases people really type into YouTube search for this topic: 3-4 in the native script, 3-4 in English"],
  "emphasis": ["up to 8 single words copied exactly from the lines that deserve color"],
- "description": "2 lines in native script. Line 1 carries the main keyword and the hook. Line 2 asks a question.",
- "ig_caption": "hook line, blank line, 2 short lines, a question, blank line, 5 hashtags",
+ "description": "YouTube description — 5 lines in native script:\n   Line 1: hook + main keyword (most important for SEO, 100-120 chars)\n   Line 2: 2-3 supporting keywords naturally embedded in a sentence\n   Line 3: a direct question to drive comments\n   Line 4: source/credit line in English (URL)\n   Line 5: channel CTA + subscribe nudge in native script",
+ "ig_caption": "Instagram caption — 5 parts separated by blank lines:\n   Part 1: hook line (same energy as the video hook, 1-2 sentences, native script)\n   Part 2: 2-3 short punchy lines giving the core value (native script)\n   Part 3: a direct question to drive comments (ends with ?)\n   Part 4: CTA line e.g. '👉 Link in bio' or '🔁 Share this'\n   Part 5: 5-8 hashtags — mix native-language and English, specific before generic",
  "hashtags": ["#shorts", "...5-7 tags, mix of broad and specific, native or English as people search"]
 }}
 
-HOOK (beats[0]) — the entire game lives here:
-- 6-8 words MAX. Spoken in under 2.5 seconds. NEVER start with "today" or a greeting.
-- Must do ONE of: threaten money/job/phone/data; reveal a secret; state a shocking number;
-  open a question they desperately want answered.
-- Starts mid-conflict, not at the beginning. Throw the viewer into the action.
-- Speak TO them: "మీరు", "आप", using their direct address always.
+HOOK (beats[0]) — this is where viewers decide to stay or scroll:
+- {hook_max_words} words MAX. Spoken in under {hook_max_seconds} seconds. NEVER start with
+  "today", "hello", "నమస్కారం", "नमस्कार", or any greeting.
+- Use the HOOK ARCHETYPE below. The archetype describes what emotion to trigger.
+- Speak directly TO the viewer: "మీరు", "আপনার", "आप" — make it their problem, not an event.
+- The hook_text (shown huge on screen) MUST be different from the first spoken line —
+  it's a 2-5 word PUNCH that the spoken line then expands.
+- NEVER open with the brand name, channel name, or "this video".
 
-TENSION (beats[1-2]):
-- Concrete, specific fact. The one number or name that makes the threat real.
-- Each beat raises discomfort one notch more than the previous.
+EVIDENCE (middle beats, role="fact"):
+- Give at least three DISTINCT facts. Each one adds something new — no rephrasing.
+- Concrete over abstract: "₹47,000 crore lost" beats "a lot of money was lost".
+- Short sentences — the viewer is watching, not reading.
 
-ESCALATION / RE-HOOK (middle beat, role="rehook"):
-- The unexpected turn: "కానీ అసలు విషయం ఇదే..." / "लेकिन असली बात ये है..."
-- This is where viewers swipe away on bad videos. Make this the MOST surprising beat.
+RE-HOOK (one middle beat, role="rehook"):
+- A sharp turn: a consequence, contradiction, or detail that reframes everything before it.
+- Must be sourced. Its job is to prevent drop-off at the 20-30 second mark.
+- Good: "కానీ ఇక్కడ ఒక twist ఉంది" → then the twist. Bad: manufactured drama.
 
 PAYOFF (beats[-2], role="payoff"):
-- Emotional release. Close exactly the loop the hook opened.
-- Speak slowly and seriously. This is the moment they've been waiting for.
+- Answers the hook's question directly. Delivers the practical takeaway.
+- The viewer should feel they learned something they can use or share.
 
-LOOP (beats[-1], role="loop"):
-- Ask a question that makes them either comment OR replay the video.
-- Must echo the opening beat so the video loops seamlessly on repeat plays.
+LOOP-GAP (beats[-1], role="loop"):
+- A specific, open question that CANNOT be answered without experience or opinion.
+- Good: "మీకు ఇలాంటి experience వచ్చిందా?" Bad: "What do you think about AI?"
+- This is the comment-bait beat — a good loop question doubles engagement rate.
 
 HOOK ARCHETYPE for this video: {archetype}
 
 DIRECTION (this drives voice, sound and screen, so use it deliberately):
 - role: beats[0]="hook", one middle beat="rehook", beats[-2]="payoff", beats[-1]="loop",
   the rest "fact".
-- mood: the hook is "shock" or "urgent"; the payoff is "serious" or "calm"; do not give every
-  beat the same mood. A calm beat right before a shocking one makes the shock land.
+- mood: use "urgent" only for a real deadline; otherwise choose a delivery that fits the
+  facts. The payoff is "serious" or "calm"; do not force shock into every story.
 - slam: on at most 3 beats (never the hook), the single most powerful word. stat: on at
   most 2 beats, only a real number or a 2-word claim that is in the source.
 - Never say "subscribe" or "follow" inside the lines; the screen handles that.
 
 STYLE:
-- 6 to 9 beats, each 5 to 14 words. Total 60-95 words. Short punchy sentences.
+- {min_beats} to {max_beats} beats, each {beat_min_words} to {beat_max_words} words.
+  Total {script_min_words}-{script_max_words} words. Short, clear sentences.
 - Every beat gives NEW information or a new emotion. No filler, no recap.
 - Use ONLY facts from KEY_FACTS and SOURCE. Never invent numbers, quotes or dates.
-- 'shot' is a PHOTO search for Unsplash: a concrete, photogenic subject that matches the
+- 'shot' is a PHOTO search: a concrete, photogenic subject that matches the
   line, such as "smartphone in hand", "indian street night", "server room", "stock market
   screen", "student laptop". No abstract words, no brand names, no people's names. Add
   "india" when a local feel helps. Never repeat a shot query.
 
 Return ONLY raw JSON. No markdown, no code fences."""
+
+SYS_WRITE = SYS_WRITE + R.PROMPT_RULES
 
 LANG_NAME = {"hi": "Hindi (Devanagari)", "te": "Telugu (Telugu script)", "en": "English"}
 
@@ -133,8 +188,8 @@ LANG_STYLE = {
 You are a Telugu content creator from Andhra Pradesh who has been making YouTube videos
 for 5 years. You THINK in Telugu. You do NOT translate.
 
-VOICE: Sound like you're excitedly telling your best friend something shocking you just
-found out. Fast, natural, real Andhra Telugu rhythm.
+VOICE: Sound like you're naturally explaining something useful or surprising to a friend.
+Use real Andhra Telugu rhythm; do not make every story sound alarming.
 
 WHAT REAL TELUGU SOUNDS LIKE:
 ✓ "అరే, మీకు తెలుసా ఏమైందో?"  (casual opening, not "నమస్కారం" or "ఈ రోజు మనం")
@@ -150,7 +205,7 @@ FORBIDDEN (these make it sound translated or robotic):
 ✗ Using "సదస్సు", "ప్రకటన", "సేవలు" — use "మీటింగ్", "న్యూస్", "పని" instead
 
 RHYTHM PATTERN (follow this loosely):
-Hook (fast, shocking, 6-8 words) → Fact 1 (medium, concrete) → Fact 2 (medium) →
+Hook (clear, 5-6 short words) → Fact 1 (medium, concrete) → Fact 2 (medium) →
 RE-HOOK (slow down, pause word + fast restart) → Payoff (slow, serious) → Loop (question, conversational)
 
 NATIVE WORD PREFERENCES:
@@ -161,7 +216,7 @@ NATIVE WORD PREFERENCES:
 आप एक Hindi content creator हैं जो 5 साल से YouTube Shorts बना रहे हैं।
 आप Hindi में सोचते हैं। आप translate नहीं करते।
 
-VOICE: जैसे आप अपने दोस्त को कोई बड़ी खबर सुना रहे हों — जल्दी, excited, real।
+VOICE: जैसे आप अपने दोस्त को कोई दिलचस्प या काम की बात बता रहे हों — natural और साफ़।
 
 असली HINDI कैसी लगती है:
 ✓ "अरे यार, ये देखो क्या हो गया!" (casual, real)
@@ -177,7 +232,7 @@ FORBIDDEN (इससे robotic या translated लगता है):
 ✗ Passive voice: "किया जाएगा", "बताया गया" — use active: "करेंगे", "बताया"
 
 RHYTHM PATTERN:
-Hook (तेज़, shocking, 6-8 words) → Fact 1 (normal speed, concrete) → Fact 2 →
+Hook (साफ़, 5-6 छोटे शब्द) → Fact 1 (normal speed, concrete) → Fact 2 →
 RE-HOOK (थोड़ा slow, turn) → Payoff (slow, serious) → Loop (question, friendly)
 
 NATIVE WORD PREFERENCES:
@@ -189,12 +244,42 @@ NATIVE WORD PREFERENCES:
 
 
 HOOK_ARCHETYPES = {
-    "stake": "Threaten something the viewer owns: their money, phone, account, job, data.",
-    "secret": "Promise a thing they are being kept from: 'the setting nobody tells you about'.",
-    "number": "Open on one shocking number or amount, then say what it means for them.",
-    "question": "Ask a question they cannot answer yet and badly want to.",
-    "contrarian": "Say the opposite of what they believe, in one line, then prove it.",
-    "countdown": "Urgency: something ends, changes or starts today and they must act.",
+    # Each archetype drives the first beat (hook) AND the hook_text (the 2-5 word card shown huge).
+    # The viewer's finger is on the scroll button during beat 0 — make them flinch.
+    "stake": (
+        "Threaten something the viewer owns right now: money, phone, job, data, account. "
+        "One concrete consequence, present tense. 'Your UPI is being drained' beats 'UPI is unsafe'. "
+        "hook_text = the threatened thing in 2-3 words."
+    ),
+    "secret": (
+        "Promise a hidden fact that changes something they already do. Frame it as: "
+        "'the thing nobody tells you about X'. Must be specific — 'this one setting' "
+        "is weaker than 'the hidden setting in Settings > Privacy that blocks tracking'. "
+        "hook_text = 3-4 words that tease the secret."
+    ),
+    "number": (
+        "Lead with one number so specific and large (or small) that viewers stop. "
+        "Real source number only — never invent. Follow immediately with why that number affects them. "
+        "hook_text = the number + 1 word unit (e.g. '₹47 Crore', '73%', '11 Seconds')."
+    ),
+    "question": (
+        "Ask a question the viewer cannot answer yet and desperately wants to. "
+        "Must be a yes/no or a 'which one' — not a 'what is X' — because curiosity needs a gap. "
+        "Bad: 'What is AI?' Good: 'ఈ ఒక్క AI App మీ salary double చేయగలదా?' "
+        "hook_text = the question compressed to 4-5 words."
+    ),
+    "contrarian": (
+        "State the exact opposite of a common belief in one line, then prove it with the source. "
+        "The claim MUST be in the source — do not manufacture it. "
+        "'Everyone says X but actually Y' pattern. "
+        "hook_text = the contrarian claim in 3-4 words."
+    ),
+    "countdown": (
+        "Real deadline, real consequence. Something ends, changes price, or becomes unavailable. "
+        "Must be sourced — never invent urgency. "
+        "'This offer ends today' is weak; 'Free plan disappears March 15 — migrate now' is strong. "
+        "hook_text = the deadline in 3-4 words (e.g. 'ఇవ్వాళే Last Day')."
+    ),
 }
 
 
@@ -241,29 +326,61 @@ def _with_retry(fn, attempts=3, base=2.0):
 
 
 def _groq(system, prompt, model, temperature=0.7):
-    c = OpenAI(api_key=os.environ["GROQ_API_KEY"], base_url="https://api.groq.com/openai/v1",
-               timeout=60)
     kwargs = {}
     if "gpt-oss" in model:
         kwargs["extra_body"] = {"reasoning_effort": "medium"}
-    return _with_retry(lambda: c.chat.completions.create(
-        model=model, temperature=temperature, max_tokens=4000,
-        messages=[{"role": "system", "content": system},
-                  {"role": "user", "content": prompt}], **kwargs).choices[0].message.content)
+    keys = groq_keys()
+    if not keys:
+        raise RuntimeError("GROQ_API_KEY is not configured")
+
+    last_error = None
+    for index, key in enumerate(keys):
+        try:
+            c = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1", timeout=60)
+            result = _with_retry(lambda: c.chat.completions.create(
+                model=model, temperature=temperature, max_tokens=4000,
+                messages=[{"role": "system", "content": system},
+                          {"role": "user", "content": prompt}], **kwargs
+            ).choices[0].message.content)
+            if index:
+                print("  Groq backup key succeeded", flush=True)
+            return result
+        except (requests.HTTPError, APIStatusError) as error:
+            last_error = error
+            if index + 1 < len(keys):
+                print(f"  Groq primary key failed ({_status_of(error) or 'error'}), "
+                      "trying backup key...", flush=True)
+                continue
+            raise
+    raise last_error
 
 
-def _gemini(system, prompt, model, temperature=0.7):
+def _gemini(system, prompt, model, temperature=0.7, timeout=60):
     def call():
         r = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+            headers={"x-goog-api-key": key},
             json={"contents": [{"parts": [{"text": system + "\n\n" + prompt}]}],
                   "generationConfig": {"responseMimeType": "application/json",
                                        "temperature": temperature}},
-            timeout=60)
+            timeout=timeout)
         r.raise_for_status()
         return r.json()["candidates"][0]["content"]["parts"][0]["text"]
-    return _with_retry(call)
+
+    keys = gemini_keys()
+    if not keys:
+        raise RuntimeError("GEMINI_API_KEY is not configured")
+    for index, key in enumerate(keys):
+        try:
+            result = _with_retry(call)
+            if index:
+                print("  Gemini backup key succeeded", flush=True)
+            return result
+        except requests.HTTPError as error:
+            if index + 1 == len(keys):
+                raise
+            print(f"  Gemini key {index + 1} failed ({_status_of(error) or 'error'}), "
+                  "trying backup key...", flush=True)
 
 
 def _providers(cfg):
@@ -313,16 +430,17 @@ def check_script(d, lang=None):
     if not isinstance(d, dict):
         return "not an object"
     beats = d.get("beats")
-    if not isinstance(beats, list) or not (5 <= len(beats) <= 10):
-        return f"need 5-10 beats, got {len(beats) if isinstance(beats, list) else 'none'}"
+    if not isinstance(beats, list) or not (MIN_BEATS <= len(beats) <= MAX_BEATS):
+        return (f"need {MIN_BEATS}-{MAX_BEATS} beats, got "
+                f"{len(beats) if isinstance(beats, list) else 'none'}")
     lines = []
     shots = set()
     for i, b in enumerate(beats):
         if not isinstance(b, dict) or not str(b.get("line", "")).strip():
             return f"beat {i} has no line"
         n = len(b["line"].split())
-        if n < 3 or n > 18:
-            return f"beat {i} has {n} words (need 3-18)"
+        if n < BEAT_MIN_WORDS or n > BEAT_MAX_WORDS:
+            return f"beat {i} has {n} words (need {BEAT_MIN_WORDS}-{BEAT_MAX_WORDS})"
         shot = str(b.get("shot", "")).strip().lower()
         if not shot:
             return f"beat {i} has no shot"
@@ -331,28 +449,38 @@ def check_script(d, lang=None):
         shots.add(shot)
         lines.append(b["line"])
     hook_words = len(lines[0].split())
-    if hook_words > 8:
-        return f"hook is {hook_words} words (need <=8, it must be spoken in about 2.5 s)"
-    if lang in ("hi", "te"):
-        for i, l in enumerate(lines):
-            if re.search(r"[A-Za-z]", l):
-                return (f"beat {i} contains Latin letters; write it entirely in "
-                        f"{'Devanagari' if lang == 'hi' else 'Telugu'} script")
-        if re.search(r"[A-Za-z]", str(d.get("hook_text", ""))):
-            return "hook_text contains Latin letters"
+    if hook_words > HOOK_MAX_WORDS:
+        return (f"hook is {hook_words} words (need <={HOOK_MAX_WORDS}, "
+                f"it must be spoken in {HOOK_MAX_SECONDS} s)")
     total = sum(len(l.split()) for l in lines)
-    if not (50 <= total <= 105):
-        return f"script is {total} words (need 50-105)"
+    if not (SCRIPT_MIN_WORDS <= total <= SCRIPT_MAX_WORDS):
+        return f"script is {total} words (need {SCRIPT_MIN_WORDS}-{SCRIPT_MAX_WORDS})"
     if not any("?" in l for l in lines[-2:]):
         return "no closing question in the last two beats"
     if not str(d.get("title", "")).strip():
         return "missing title"
     if len(str(d["title"])) > 100:
         return "title too long"
+    if not str(d.get("claim", "")).strip():
+        return "missing central claim"
+    supporting_facts = d.get("supporting_facts")
+    if not isinstance(supporting_facts, list) or len(supporting_facts) != 3 or any(
+        not str(fact).strip() for fact in supporting_facts
+    ):
+        return "need exactly 3 source-backed supporting_facts"
     if not str(d.get("hook_text", "")).strip():
         return "missing hook_text"
-    if len(str(d["hook_text"]).split()) > 6:
-        return "hook_text longer than 6 words"
+    hook_card_words = len(str(d["hook_text"]).split())
+    if not (HOOK_CARD_MIN_WORDS <= hook_card_words <= HOOK_CARD_MAX_WORDS):
+        return (f"hook_text has {hook_card_words} words (need "
+                f"{HOOK_CARD_MIN_WORDS}-{HOOK_CARD_MAX_WORDS})")
+    if d.get("story_format") not in STORY_FORMATS:
+        return "story_format must be explainer, list, versus, or timeline"
+    if not str(d.get("cta_text", "")).strip():
+        return "missing topic-specific cta_text"
+    retention_reason = R.gates(d, lang)
+    if retention_reason:
+        return retention_reason
     if not d.get("hashtags"):
         return "missing hashtags"
     return None
@@ -394,10 +522,25 @@ def propose_angles(story, cfg):
 def write_script(story, angle, lcfg, cfg, note="", archetype="stake"):
     """Write the picked angle natively for one channel. Retries feed the exact failure
     back to the model so the second attempt fixes the specific rule that was broken."""
+    # If the angle proposer identified a better archetype, use it
+    effective_archetype = angle.get("hook_archetype") or archetype
+    if effective_archetype not in HOOK_ARCHETYPES:
+        effective_archetype = archetype
+    archetype = effective_archetype
+
     system = SYS_WRITE.format(lang_name=LANG_NAME.get(lcfg["lang"], lcfg["lang"]),
                               style=LANG_STYLE.get(lcfg["lang"], ""),
                               brand=lcfg["brand"], audience=lcfg["audience"].replace("_", " "),
-                              archetype=f"{archetype}: {HOOK_ARCHETYPES.get(archetype, '')}")
+                              editorial_identity=lcfg.get("editorial_identity", lcfg["audience"]),
+                              archetype=f"{archetype}: {HOOK_ARCHETYPES.get(archetype, '')}",
+                              hook_max_words=HOOK_MAX_WORDS,
+                              hook_max_seconds=HOOK_MAX_SECONDS,
+                              hook_card_min_words=HOOK_CARD_MIN_WORDS,
+                              hook_card_max_words=HOOK_CARD_MAX_WORDS,
+                              min_beats=MIN_BEATS, max_beats=MAX_BEATS,
+                              beat_min_words=BEAT_MIN_WORDS, beat_max_words=BEAT_MAX_WORDS,
+                              script_min_words=SCRIPT_MIN_WORDS,
+                              script_max_words=SCRIPT_MAX_WORDS)
     base = (_story_prompt(story) +
             f"\n\nANGLE: {angle['take']}\nHOOK_IDEA (translate the energy, not the words): "
             f"{angle.get('hook_idea', '')}\nKEY_FACTS:\n" +
@@ -424,6 +567,23 @@ def write_script(story, angle, lcfg, cfg, note="", archetype="stake"):
                     data["archetype"] = archetype
                     if cfg.get("polish", True):
                         data = _polish(data, system, base, fn, model, lcfg)
+                    data = L.repair_script(data, lcfg.get("lang"), story)
+                    data = L.judge(data, lcfg.get("lang"))
+                    retention_reason = R.gates(data, lcfg.get("lang"))
+                    if retention_reason:
+                        feedback = (
+                            "\n\nYOUR LANGFIX/JUDGE OUTPUT WAS REJECTED: "
+                            f"{retention_reason}. Fix exactly that and return the full JSON."
+                        )
+                        print(f"  post-language gate rejected: {retention_reason}", flush=True)
+                        _dump(f"{slug}_{model.replace('/', '-')}_langfix", raw)
+                        continue
+                    retention_score, retention_notes = R.score(data, lcfg.get("lang"))
+                    print(
+                        f"  retention {retention_score}/100 [{R.verdict(retention_score)}]"
+                        + (f" :: {', '.join(retention_notes)}" if retention_notes else ""),
+                        flush=True,
+                    )
                     return data
                 feedback = (f"\n\nYOUR PREVIOUS ANSWER WAS REJECTED: {reason}. "
                             f"Fix exactly that and return the full JSON again.")
@@ -538,20 +698,63 @@ def _finish(d, lcfg):
     else:
         d[“title_with_hashtags”] = base_title
 
-    d.setdefault(“description”, d[“title”])
-    # Instagram caption: hook line + hashtags including channel-specific ones
-    ig_hashtags = lcfg.get(“ig_hashtags”, “ “.join(d[“hashtags”][:5]))
-    d.setdefault(“ig_caption”,
-                 d[“title”] + “\n\n” + “\n”.join(lines[:2]) + “\n\n” + ig_hashtags)
+    # ── YouTube description: SEO-rich 5-line template ───────────────────────
+    # Only build our own if the model gave something too short
+    model_desc = str(d.get(“description”, “”)).strip()
+    if len(model_desc) < 80:
+        hook_line_desc = str(d.get(“hook_text”, “”) or d[“title”]).strip()
+        kw_line = “ | “.join(str(t).strip() for t in d.get(“search_terms”, [])[:3] if t)
+        closing_q_desc = next((str(b.get(“line”, “”)).strip() for b in reversed(beats)
+                                if “?” in b.get(“line”, “”)), “”)
+        bio_link = lcfg.get(“bio_link”, “”)
+        cta_desc = str(d.get(“cta_screen”, “”) or lcfg.get(“cta”, “”)).strip()
+        desc_parts = [hook_line_desc]
+        if kw_line:
+            desc_parts.append(kw_line)
+        if closing_q_desc:
+            desc_parts.append(closing_q_desc)
+        if bio_link:
+            desc_parts.append(f”More: {bio_link}”)
+        if cta_desc:
+            desc_parts.append(cta_desc)
+        d[“description”] = “\n”.join(desc_parts)
+    else:
+        d[“description”] = model_desc
+
+    # ── Instagram caption: viral 5-part structure ────────────────────────────
+    # Only build our own if the model gave something weak
+    model_ig = str(d.get(“ig_caption”, “”)).strip()
+    ig_hashtags_cfg = lcfg.get(“ig_hashtags”, “”)
+    all_hashtags = “ “.join(d[“hashtags”][:5])
+    if ig_hashtags_cfg:
+        all_hashtags = ig_hashtags_cfg + “ “ + all_hashtags
+
+    if len(model_ig) < 60:
+        hook_ig = str(d.get(“hook_text”, “”) or d[“title”]).strip()
+        # Pick 2 short fact lines from the middle beats
+        fact_lines = [str(b[“line”]).strip() for b in beats[1:4]
+                      if b.get(“role”) in (“fact”, “rehook”)][:2]
+        closing_q_ig = next((str(b.get(“line”, “”)).strip() for b in reversed(beats)
+                              if “?” in b.get(“line”, “”)), “”)
+        ig_parts = [hook_ig, “”]
+        if fact_lines:
+            ig_parts += fact_lines + [“”]
+        if closing_q_ig:
+            ig_parts += [closing_q_ig, “”]
+        ig_parts += [f”👉 {str(d.get('cta_screen','Follow us')).strip()}”, “”, all_hashtags]
+        d[“ig_caption”] = “\n”.join(ig_parts)
+    else:
+        # Ensure hashtags are appended even if the model skipped them
+        if all_hashtags and all_hashtags not in model_ig:
+            d[“ig_caption”] = model_ig + “\n\n” + all_hashtags
     return d
 
 
-SYS_POLISH = """You are a ruthless retention editor for {lang_name} Shorts. Below is a draft
-script as JSON. Improve ONLY the wording of the "line" fields: cut every filler word, make the
-hook hit harder in fewer words, make each beat start with its strongest word, sharpen the
-re-hook and the payoff, and keep it sounding like a native speaker talking to a friend.
-Keep: the same number of beats, the same facts, the same roles/moods/shots/slam/stat fields,
-native script only (no Latin letters), hook <= 8 words, a closing question. Do not add facts.
+SYS_POLISH = """You are a careful editor for {lang_name} Shorts. Below is a draft script as
+JSON. Improve ONLY the wording of the "line" fields for clarity and natural delivery.
+Keep: claim, supporting_facts, the same number of beats, the same facts,
+roles/moods/shots/slam/stat fields, story_format, cta_text, native script only
+(no Latin letters), hook <= {hook_max_words} words, and a closing question. Do not add facts.
 Return the FULL JSON again with the same keys. ONLY raw JSON."""
 
 
@@ -559,9 +762,12 @@ def _polish(d, system, base, fn, model, lcfg):
     """One critic pass. If its output breaks any rule we keep the original: polishing may
     only ever improve a script, never lose one."""
     try:
-        slim = {k: d[k] for k in ("title", "hook_text", "beats", "emphasis", "description",
-                                  "ig_caption", "hashtags", "search_terms") if k in d}
-        raw = fn(SYS_POLISH.format(lang_name=LANG_NAME.get(lcfg["lang"], lcfg["lang"])),
+        slim = {k: d[k] for k in ("title", "claim", "supporting_facts", "hook_text",
+                                  "beats", "emphasis", "description",
+                                  "ig_caption", "hashtags", "search_terms", "story_format",
+                                  "cta_text", "cta_screen") if k in d}
+        raw = fn(SYS_POLISH.format(lang_name=LANG_NAME.get(lcfg["lang"], lcfg["lang"]),
+                                   hook_max_words=HOOK_MAX_WORDS),
                  json.dumps(slim, ensure_ascii=False), model, 0.5)
         cand = _extract_json(raw)
         if check_script(cand, lcfg.get("lang")) is None and len(cand["beats"]) == len(d["beats"]):
@@ -575,7 +781,30 @@ def _polish(d, system, base, fn, model, lcfg):
     return d
 
 
-def pick_layout(used_recently, layouts):
-    """Rotate layouts so one channel does not look templated from video to video."""
+def pick_layout(used_recently, layouts, preferred=None):
+    """Prefer a layout that fits the story, without repeating recent treatments."""
     available = [l for l in layouts if l not in used_recently[-3:]]
+    if preferred in available:
+        return preferred
     return random.choice(available or layouts)
+
+
+# === GULU TITLES ===
+from pipeline import titles as _T
+
+_gulu_prev_write = write_script
+def write_script(story, angle, lcfg, cfg, note="", archetype="stake"):
+    d = _gulu_prev_write(story, angle, lcfg, cfg, note=note, archetype=archetype)
+    d, rep = _T.harden(
+        d, lcfg.get("lang", "en"),
+        brand=lcfg.get("brand", ""), handle=lcfg.get("handle", ""),
+        link=cfg.get("bio_link", "") or lcfg.get("bio_link", ""),
+        source_url=story.get("url", ""),
+    )
+    print("  titles hardened: " + str(d["title_len"]) + " chars, fold " + str(d["fold_len"])
+          + (" | " + ", ".join(rep) if rep else ""), flush=True)
+    return d
+
+# === FLOWFIX ===
+from pipeline import flowfix as _FF
+_FF.wrap(__import__(__name__, fromlist=["x"]))

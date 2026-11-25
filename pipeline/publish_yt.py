@@ -11,13 +11,22 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 IST = ZoneInfo("Asia/Kolkata")
 
 
-def _service(channel):
+def _credentials(channel):
     tok = json.loads((ROOT / "tokens" / f"yt_{channel}.json").read_text(encoding="utf-8"))
-    creds = Credentials(
+    return Credentials(
         None, refresh_token=tok["refresh_token"], client_id=tok["client_id"],
         client_secret=tok["client_secret"], token_uri="https://oauth2.googleapis.com/token",
         scopes=tok.get("scopes"))
+
+
+def _service(channel):
+    creds = _credentials(channel)
     return build("youtube", "v3", credentials=creds, cache_discovery=False)
+
+
+def _analytics_service(channel):
+    creds = _credentials(channel)
+    return build("youtubeAnalytics", "v2", credentials=creds, cache_discovery=False)
 
 
 def _slot(lcfg, step_min, index):
@@ -50,12 +59,16 @@ def _slot(lcfg, step_min, index):
     return slot
 
 
-def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=False):
+def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=False,
+           thumbnail=None):
     """Upload one Short.
 
     While the Cloud project is unaudited, `public_ok` stays False: the video is
     created private with no publishAt, because the API cannot publish it. Once the
     audit passes, pass True and the same call schedules it for its slot.
+
+    thumbnail: local path to a 1280×720 JPEG to set as the video thumbnail.
+               When supplied the thumbnail is uploaded immediately after the video.
     """
     yt = _service(channel)
     slot = _slot(lcfg, step_min, index)
@@ -65,18 +78,54 @@ def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=
         status["publishAt"] = slot.astimezone(datetime.timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ")
 
-    desc = script.get("description") or script["script"].split(".")[0].strip()
+    # ── Build a rich description for SEO ─────────────────────────────────────
+    # Use the model's 5-line description; fall back to a constructed one.
+    model_desc = str(script.get("description") or "").strip()
+    if len(model_desc) >= 80:
+        desc_body = model_desc
+    else:
+        # Construct from fields: hook + keywords + closing question + source + CTA
+        hook = str(script.get("hook_text") or script.get("title", "")).strip()
+        kw_line = " | ".join(str(t) for t in script.get("search_terms", [])[:4] if t)
+        closing_q = ""
+        for b in reversed(script.get("beats", [])):
+            if "?" in str(b.get("line", "")):
+                closing_q = str(b["line"]).strip()
+                break
+        cta = str(script.get("cta_screen") or lcfg.get("cta", "")).strip()
+        parts = [hook]
+        if kw_line:
+            parts.append(kw_line)
+        if closing_q:
+            parts.append(closing_q)
+        parts.append(f"Source: {source_url}")
+        if cta:
+            parts.append(cta)
+        desc_body = "\n".join(parts)
+
     tags = script.get("tags") or [h.lstrip("#") for h in script["hashtags"]][:15]
-    # first three hashtags are shown above the title, so lead with the strongest ones
     kw = ", ".join(script.get("search_terms", [])[:6])
     # Use title_with_hashtags if available (2-3 niche hashtags appended inside the title)
-    # Research: hashtags IN the title are clickable and boost discovery
     upload_title = script.get("title_with_hashtags") or script["title"]
+
+    full_description = (
+        f"{desc_body}\n\n"
+        + (f"{kw}\n\n" if kw else "")
+        + f"Source: {source_url}\n\n"
+        + " ".join(script["hashtags"])
+    )
+    # Deduplicate the source line if it's already in desc_body
+    if f"Source: {source_url}" in desc_body:
+        full_description = (
+            f"{desc_body}\n\n"
+            + (f"{kw}\n\n" if kw else "")
+            + " ".join(script["hashtags"])
+        )
+
     body = {
         "snippet": {
             "title": upload_title[:100],
-            "description": f"{desc}\n\n" + (f"{kw}\n\n" if kw else "") +
-                           f"Source: {source_url}\n\n{' '.join(script['hashtags'])}",
+            "description": full_description[:5000],
             "tags": tags,
             "categoryId": "28",
             "defaultLanguage": lcfg["lang"],
@@ -87,7 +136,21 @@ def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=
 
     media = MediaFileUpload(video, chunksize=-1, resumable=True, mimetype="video/mp4")
     resp = yt.videos().insert(part="snippet,status", body=body, media_body=media).execute()
-    return resp["id"], slot.isoformat(), status["privacyStatus"]
+    video_id = resp["id"]
+
+    # ── Upload custom thumbnail ───────────────────────────────────────────────
+    # Thumbnails require the channel to have a verified phone number on YouTube.
+    # If that's not done yet this call returns 403; it will silently skip.
+    if thumbnail and pathlib.Path(thumbnail).is_file():
+        try:
+            thumb_media = MediaFileUpload(thumbnail, mimetype="image/jpeg")
+            yt.thumbnails().set(videoId=video_id, media_body=thumb_media).execute()
+            print(f"  [yt] thumbnail uploaded for {video_id}", flush=True)
+        except Exception as e:
+            print(f"  [yt] WARNING: thumbnail upload failed (need verified phone?): {e}",
+                  flush=True)
+
+    return video_id, slot.isoformat(), status["privacyStatus"]
 
 
 def publish_now(channel, video_id, slot=None):
