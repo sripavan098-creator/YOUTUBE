@@ -21,10 +21,19 @@ channels:
     audience: india
     editorial_identity: "Hindi-first, India-wide practical tech coverage focused on consumer impact, digital services, and effects on money or work."
     focus_terms: ["smartphone", "digital payment", "consumer app", "internet plan", "Android", "AI jobs", "Indian startup", "personal data", "online scam", "UPI"]
-    yt_start: "18:00"
+    # Research: 8:30 AM IST = commute scroll; 7:30 PM IST = end-of-workday peak for tech
+    yt_start: "08:30"        # IST — batch 0 (morning commute)
+    yt_start_2: "13:00"      # IST — batch 1 (lunch scroll)
+    yt_start_3: "18:00"      # IST — batch 2 (post-work)
+    yt_start_4: "21:00"      # IST — batch 3 (prime time late)
+    ig_start: "08:00"        # IST — Reel posts slightly before YT for algorithmic lead
     cta: "गाइड का लिंक बायो में है। रोज़ फ़ॉलो करें"
     nudge: "कल का पार्ट मिस मत करना, फ़ॉलो करें"
     monet_link: "https://yourinstamojo.com/vincodez-guides"
+    # 2-3 hashtags appended to YT title (placed IN title, not description — they're clickable)
+    # Research: niche hashtags outperform generic #Shorts #viral
+    yt_hashtags: "#HindiTech #AITools"
+    ig_hashtags: "#HindiTech #AITools #AndroidTips #TechIndia #Vincodez"
   te:
     handle: "@techmuchatlu-official"
     brand: "Tech Muchatlu"
@@ -38,18 +47,24 @@ channels:
     audience: south_india
     editorial_identity: "Telugu tech reporting for Andhra Pradesh and Telangana, especially local technology, startups, jobs, digital services, and consumer impact."
     focus_terms: ["Hyderabad", "Andhra Pradesh", "Telangana", "Telugu", "South India", "Indian startup", "local jobs", "digital payment", "smartphone", "UPI"]
-    yt_start: "17:30"
+    yt_start: "08:30"        # IST — batch 0 (morning commute)
+    yt_start_2: "13:00"      # IST — batch 1 (lunch scroll)
+    yt_start_3: "18:00"      # IST — batch 2 (post-work)
+    yt_start_4: "21:00"      # IST — batch 3 (prime time late)
+    ig_start: "08:00"        # IST
     cta: "గైడ్ లింక్ బయోలో ఉంది. రోజూ ఫాలో అవ్వండి"
     nudge: "రేపటి పార్ట్ మిస్ అవ్వకండి, ఫాలో చేయండి"
     monet_link: "https://yourinstamojo.com/techmuchatlu-guides"
+    yt_hashtags: "#TeluguTech #AITelugu"
+    ig_hashtags: "#TeluguTech #TechMuchatlu #AITelugu #Hyderabad #TechIndia"
 
-stories_per_channel: 4
+stories_per_channel: 8   # raised from 4 → 8 so each of 4 daily batches gets 2 fresh stories
 longform_per_week: 2
 layouts: [list, explainer, versus, timeline]
 model_primary: openai/gpt-oss-120b
 model_fallback: gemini-3.5-flash-lite
 model_fallback2: gemini-3.5-flash
-ig_daily: 3
+ig_daily: 6              # raised from 3 → 6 to match 4 Shorts/day cadence (morning + evening IG)
 yt_step_min: 20
 yt_public_after_audit: false
 # v3: retention upgrades
@@ -57,4 +72,9 @@ sfx: true            # soft whoosh on every scene cut
 music_volume: 0.16   # bed under the voice (ducks to about -26 dB while speaking); 0 = no music
 # v4
 polish: true         # second LLM pass that tightens every line (kept only if it passes the validator)
-trends: true       # boost stories that match what India is searching on Google right now
+trends: true         # boost stories that match what India is searching on Google right now
+# v5: 30-day monetization sprint
+# shorts_per_day: 2 means pipeline runs twice per channel per day (cron at yt_start + yt_start_2)
+shorts_per_day: 4    # 4 Shorts/day × 2 channels = 8 YT Shorts/day → 240 in 30 days
+# Content priority order by CPM (highest earning angles first)
+content_priority: [ai_tools, earning_apps, free_alternatives, phone_tips, ai_for_students, govt_tech]

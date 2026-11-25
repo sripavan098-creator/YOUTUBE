@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import edge_tts
 from mutagen.mp3 import MP3
@@ -90,13 +91,13 @@ def prosody(base_rate, base_pitch, base_volume, mood):
 
 
 def _synth_one(text, voice, rate, pitch, volume, mp3_path, words_path,
-               lang=None, sarvam_voice_id=None):
+               lang=None, sarvam_voice_id=None, role="fact"):
     """Synthesise one beat.
 
     Priority:
       1. Sarvam AI — if SARVAM_API_KEY is set. Natural Indian-language prosody,
-         voice cloning support, correct Telugu/Hindi accent. Pace is derived from
-         Edge TTS rate so the mood system still controls delivery speed.
+         voice cloning support, correct Telugu/Hindi accent. Pace and temperature
+         are derived from the beat's role for natural expressive delivery.
       2. Edge TTS — fallback when Sarvam is unavailable.
 
     When Sarvam is used, word-boundary JSON is estimated from the audio duration
@@ -105,17 +106,23 @@ def _synth_one(text, voice, rate, pitch, volume, mp3_path, words_path,
     """
     # Try Sarvam first
     try:
-        from pipeline.sarvam_voice import synth_sarvam, available as sarvam_ok
+        from pipeline.sarvam_voice import synth_sarvam, available as sarvam_ok, ROLE_SETTINGS
     except ImportError:
         sarvam_ok = lambda: False
+        ROLE_SETTINGS = {}
 
     if sarvam_ok() and lang:
-        # Map channel prosody to a faster Sarvam pace for short-form narration.
-        pace = _sarvam_pace(rate)
+        # Role-based pace + temperature (research-validated per beat emotion)
+        role_cfg = ROLE_SETTINGS.get(role, {"pace": 1.10, "temperature": 0.75})
+        # Also factor in the mood's rate adjustment from Edge TTS rate setting
+        r_num = int(re.search(r"-?\d+", rate).group()) if re.search(r"-?\d+", rate) else 0
+        pace = round(max(0.6, min(1.8, role_cfg["pace"] + r_num / 200)), 2)  # blend
+        temperature = role_cfg["temperature"]
         wav_path = str(pathlib.Path(mp3_path).with_suffix(".wav"))
         try:
             dur = synth_sarvam(text, lang, wav_path,
-                               voice_id=sarvam_voice_id, pace=pace)
+                               voice_id=sarvam_voice_id, pace=pace,
+                               temperature=temperature)
             # Convert WAV → MP3 for consistency downstream
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", wav_path,
                             "-c:a", "libmp3lame", "-q:a", "2", mp3_path], check=True)
@@ -192,14 +199,45 @@ def synth_beats(beats, lcfg, workdir, mp3_out):
         except Exception as e:
             print(f"  [sarvam] voice clone registration failed: {e}")
 
+    # Build per-beat synthesis args (prosody is cheap, done upfront)
+    beat_args = []
     for i, b in enumerate(beats):
         role = b.get("role") or ("hook" if i == 0 else "fact")
         mood = b.get("mood") or DEFAULT_MOOD.get(role, "curious")
         rate, pitch, vol = prosody(lcfg.get("rate", "+0%"), lcfg.get("pitch", "+0Hz"),
                                    lcfg.get("volume", "+0%"), mood)
         raw, wj = workdir / f"b{i}.mp3", workdir / f"b{i}.json"
+        beat_args.append((i, b, role, rate, pitch, vol, raw, wj))
+
+    # ── Parallel TTS synthesis ──────────────────────────────────────────────
+    # All Sarvam/Edge API calls run concurrently; file I/O stays serial below.
+    # With 6 beats × ~3s each this drops total voice time from ~18s → ~3-4s.
+    def _synth_beat(args):
+        i, b, role, rate, pitch, vol, raw, wj = args
         _synth_one(b["line"], lcfg["voice"], rate, pitch, vol, str(raw), str(wj),
-                   lang=lang, sarvam_voice_id=sarvam_voice_id)
+                   lang=lang, sarvam_voice_id=sarvam_voice_id, role=role)
+        return i
+
+    max_workers = min(len(beat_args), 6)
+    if max_workers > 1:
+        print(f"  [voice] synthesising {len(beat_args)} beats in parallel (workers={max_workers})", flush=True)
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {ex.submit(_synth_beat, args): args[0] for args in beat_args}
+            done = {}
+            for f in as_completed(futures):
+                idx = futures[f]
+                try:
+                    done[idx] = f.result()
+                except Exception as e:
+                    print(f"  [voice] beat {idx} failed: {e}", flush=True)
+                    raise
+    else:
+        # Single beat — no overhead needed
+        for args in beat_args:
+            _synth_beat(args)
+
+    # ── Assemble in original order (serial — file I/O must be ordered) ──────
+    for i, b, role, rate, pitch, vol, raw, wj in beat_args:
         w = _json.loads(wj.read_text(encoding="utf-8"))
         # Keep a short natural edge around the spoken segment.
         cut0 = max(0.0, w[0]["start"] - 0.03)

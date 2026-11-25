@@ -30,10 +30,30 @@ def _analytics_service(channel):
 
 
 def _slot(lcfg, step_min, index):
+    """Pick the posting slot for this video.
+
+    4-slot schedule (IST):
+      index % 4 == 0  → yt_start   (08:30 morning commute)
+      index % 4 == 1  → yt_start_2 (13:00 lunch)
+      index % 4 == 2  → yt_start_3 (18:00 post-work)
+      index % 4 == 3  → yt_start_4 (21:00 prime time)
+
+    Falls back to 2-slot if yt_start_3/4 not configured, and to 1-slot
+    if only yt_start is set — always safe.
+    """
     now = datetime.datetime.now(IST)
-    h, m = map(int, lcfg["yt_start"].split(":"))
+    slot_keys = ["yt_start", "yt_start_2", "yt_start_3", "yt_start_4"]
+    # Build list of configured slots
+    slots = [lcfg.get(k) for k in slot_keys]
+    slots = [s for s in slots if s]  # drop None / unconfigured
+
+    n = len(slots)                    # 1, 2, or 4
+    slot_key = slots[index % n]
+    days_ahead = index // n
+
+    h, m = map(int, slot_key.split(":"))
     slot = now.replace(hour=h, minute=m, second=0, microsecond=0)
-    slot += datetime.timedelta(minutes=step_min * index)
+    slot += datetime.timedelta(days=days_ahead, minutes=step_min * days_ahead)
     while slot < now + datetime.timedelta(minutes=20):
         slot += datetime.timedelta(days=1)
     return slot
@@ -58,9 +78,12 @@ def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=
     tags = script.get("tags") or [h.lstrip("#") for h in script["hashtags"]][:15]
     # first three hashtags are shown above the title, so lead with the strongest ones
     kw = ", ".join(script.get("search_terms", [])[:6])
+    # Use title_with_hashtags if available (2-3 niche hashtags appended inside the title)
+    # Research: hashtags IN the title are clickable and boost discovery
+    upload_title = script.get("title_with_hashtags") or script["title"]
     body = {
         "snippet": {
-            "title": script["title"][:100],
+            "title": upload_title[:100],
             "description": f"{desc}\n\n" + (f"{kw}\n\n" if kw else "") +
                            f"Source: {source_url}\n\n{' '.join(script['hashtags'])}",
             "tags": tags,

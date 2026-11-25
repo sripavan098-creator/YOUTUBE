@@ -589,26 +589,25 @@ def _seo_tags(d, lcfg):
 
 def _finish(d, lcfg):
     """Derive the fields the rest of the pipeline reads."""
-    for b in d["beats"]:
-        b["line"] = b["line"].strip()
-        if b["line"][-1] not in ".?!।…":
-            b["line"] += "."  # terminal punctuation gives the TTS a natural pause per beat
-    lines = [b["line"] for b in d["beats"]]
+    for beat in d["beats"]:
+        beat["line"] = beat["line"].strip()
+        if beat["line"][-1] not in ".?!।…":
+            beat["line"] += "."
+    lines = [beat["line"] for beat in d["beats"]]
     d["script"] = " ".join(lines)
-    d["shots"] = [b["shot"].strip() for b in d["beats"]]
-    # Split on whitespace, not \w: Python's \w breaks Devanagari/Telugu words at vowel signs.
+    d["shots"] = [beat["shot"].strip() for beat in d["beats"]]
     strip = ".,!?।…\"'“”‘’():;-"
-    words = set(w.strip(strip) for l in lines for w in l.split())
-    d["emphasis"] = [w.strip(strip) for w in d.get("emphasis", [])
-                     if isinstance(w, str) and w.strip(strip) in words][:8]
+    words = set(word.strip(strip) for line in lines for word in line.split())
+    d["emphasis"] = [word.strip(strip) for word in d.get("emphasis", [])
+                     if isinstance(word, str) and word.strip(strip) in words][:8]
     tags = []
-    for t in d.get("hashtags", []):
-        t = str(t).strip()
-        if t and not t.startswith("#"):
-            t = "#" + t.replace(" ", "")
-        if t and t not in tags:
-            tags.append(t)
-    if "#shorts" not in [t.lower() for t in tags]:
+    for tag in d.get("hashtags", []):
+        tag = str(tag).strip()
+        if tag and not tag.startswith("#"):
+            tag = "#" + tag.replace(" ", "")
+        if tag and tag not in tags:
+            tags.append(tag)
+    if "#shorts" not in [tag.lower() for tag in tags]:
         tags.insert(0, "#shorts")
     d["hashtags"] = tags[:8]
     _direct(d)
@@ -617,8 +616,16 @@ def _finish(d, lcfg):
         d["story_format"] = "explainer"
     d.setdefault("cta_text", lcfg.get("cta", ""))
     d.setdefault("cta_screen", d["cta_text"])
+    base_title = str(d.get("title", "")).strip()
+    yt_hashtags = str(lcfg.get("yt_hashtags", "")).strip()
+    if yt_hashtags and len(base_title) + 1 + len(yt_hashtags) <= 100:
+        d["title_with_hashtags"] = f"{base_title} {yt_hashtags}"
+    else:
+        d["title_with_hashtags"] = base_title
     d.setdefault("description", d["title"])
-    d.setdefault("ig_caption", d["title"] + "\n\n" + " ".join(d["hashtags"][:5]))
+    ig_hashtags = lcfg.get("ig_hashtags", " ".join(d["hashtags"][:5]))
+    d.setdefault("ig_caption",
+                 d["title"] + "\n\n" + "\n".join(lines[:2]) + "\n\n" + ig_hashtags)
     return d
 
 

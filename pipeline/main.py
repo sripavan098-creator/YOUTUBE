@@ -74,6 +74,16 @@ CFG = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 # need: skipped or failed stories must not leave a channel short of its 4 videos.
 ANGLE_POOL = 4
 
+# Slot offset per batch:
+# batch 0 (morning)   → slot_offset=0  → yt_start   (08:30)
+# batch 1 (lunch)     → slot_offset=1  → yt_start_2 (13:00)
+# batch 2 (post-work) → slot_offset=2  → yt_start_3 (18:00)
+# batch 3 (night)     → slot_offset=3  → yt_start_4 (21:00)
+# The offset is passed to publish_yt._slot(index=slot_offset+i) so the index
+# modulo the number of configured slots picks the right time key.
+_STORIES = CFG.get("stories_per_channel", 4)
+_SPD = CFG.get("shorts_per_day", 2)   # 4 → 4 batches/day
+
 
 def _ig_slots(day, count, start_hour=12, end_hour=21):
     """Spread posts across the day, dropping slots that have already passed so a
@@ -165,7 +175,20 @@ def _repeats_recent(channel, story, threshold=0.6):
     return False
 
 
-def morning():
+def morning(slot_offset: int = 0):
+    """Run one production batch per channel.
+
+    publish_yt._slot() maps (slot_offset + i) % num_configured_slots to one of
+    yt_start / yt_start_2 / yt_start_3 / yt_start_4.
+
+    4-slot schedule (shorts_per_day=4):
+      batch 0  slot_offset=0  → yt_start   08:30
+      batch 1  slot_offset=1  → yt_start_2 13:00
+      batch 2  slot_offset=2  → yt_start_3 18:00
+      batch 3  slot_offset=3  → yt_start_4 21:00
+
+    With 2 channels × 4 slots = 8 YT Shorts per day → 240 in 30 days.
+    """
     day = datetime.date.today().isoformat()
     channels = CFG["channels"]
     langs = [c["lang"] for c in channels.values()]
@@ -277,7 +300,8 @@ def morning():
                     encoding="utf-8")
                 try:
                     vid_id, slot, privacy = publish_yt.upload(
-                        channel, lcfg, CFG["yt_step_min"], i, _clean_dict(script), video,
+                        channel, lcfg, CFG["yt_step_min"], slot_offset + i,
+                        _clean_dict(script), video,
                         story["url"], CFG.get("yt_public_after_audit", False))
                     print(f"YT {channel} {vid_id} {privacy} {slot}")
                     # upload_batch.py checks this marker so it never uploads the same render twice
@@ -320,6 +344,34 @@ def _queue_ig(day, channels):
     print(f"IG: queued {min(len(interleaved), len(slots))} posts")
 
 
+def batch1():
+    """Lunch batch — targets yt_start_2 (13:00 IST)."""
+    if _SPD < 2:
+        print("shorts_per_day < 2 — skipping batch1")
+        return
+    morning(slot_offset=1)
+
+
+def batch2():
+    """Post-work batch — targets yt_start_3 (18:00 IST)."""
+    if _SPD < 3:
+        print("shorts_per_day < 3 — skipping batch2")
+        return
+    morning(slot_offset=2)
+
+
+def batch3():
+    """Night batch — targets yt_start_4 (21:00 IST)."""
+    if _SPD < 4:
+        print("shorts_per_day < 4 — skipping batch3")
+        return
+    morning(slot_offset=3)
+
+
+# Keep 'evening' as an alias for the second batch so old CLI flags still work
+evening = batch1
+
+
 def pump_ig():
     now = datetime.datetime.now().isoformat(timespec="seconds")
     for row_id, sid, channel, path, caption in db.due_ig(now):
@@ -335,6 +387,12 @@ def pump_ig():
 def main():
     if "--now" in sys.argv:
         morning()
+    elif "--evening" in sys.argv or "--batch1" in sys.argv:
+        batch1()
+    elif "--batch2" in sys.argv:
+        batch2()
+    elif "--batch3" in sys.argv:
+        batch3()
     elif "--gallery" in sys.argv:
         from pipeline import gallery
         print(gallery.build())
@@ -348,13 +406,29 @@ def main():
         from pipeline import replay
         replay.replay_all()
     else:
+        # 4-slot render schedule (2h before each posting slot):
+        #   06:00 → batch0  → posts at 08:30 (morning commute)
+        #   10:30 → batch1  → posts at 13:00 (lunch scroll)
+        #   15:30 → batch2  → posts at 18:00 (post-work)
+        #   18:30 → batch3  → posts at 21:00 (prime time)
+        # Each render takes ~90 min for 2 channels × 4 stories → 2h safety margin.
         schedule.every().day.at("05:30").do(learn.refresh_stats)
-        schedule.every().day.at("06:00").do(morning)
+        schedule.every().day.at("06:00").do(morning)   # batch 0
+        if _SPD >= 2:
+            schedule.every().day.at("10:30").do(batch1)  # batch 1
+        if _SPD >= 3:
+            schedule.every().day.at("15:30").do(batch2)  # batch 2
+        if _SPD >= 4:
+            schedule.every().day.at("18:30").do(batch3)  # batch 3
         schedule.every().tuesday.at("10:00").do(longform.build_all)
         schedule.every().friday.at("10:00").do(longform.build_all)
         schedule.every(15).minutes.do(pump_ig)
         schedule.every(25).days.at("09:00").do(refresh_ig.main)
-        print("daemon up:", schedule.next_run())
+        schedules = ["06:00 batch0"]
+        if _SPD >= 2: schedules.append("10:30 batch1")
+        if _SPD >= 3: schedules.append("15:30 batch2")
+        if _SPD >= 4: schedules.append("18:30 batch3")
+        print(f"daemon up — {_SPD} batches/day: {', '.join(schedules)} — next: {schedule.next_run()}")
         while True:
             schedule.run_pending()
             time.sleep(30)
