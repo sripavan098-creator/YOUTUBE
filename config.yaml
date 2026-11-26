@@ -34,6 +34,7 @@ channels:
     # Research: niche hashtags outperform generic #Shorts #viral
     yt_hashtags: "#HindiTech #AITools"
     ig_hashtags: "#HindiTech #AITools #AndroidTips #TechIndia #Vincodez"
+    extra_tags: ["HindiTech", "AITools", "TechIndia", "technews", "android", "smartphone", "india"]
   te:
     handle: "@techmuchatlu-official"
     brand: "Tech Muchatlu"
@@ -57,6 +58,7 @@ channels:
     monet_link: "https://yourinstamojo.com/techmuchatlu-guides"
     yt_hashtags: "#TeluguTech #AITelugu"
     ig_hashtags: "#TeluguTech #TechMuchatlu #AITelugu #Hyderabad #TechIndia"
+    extra_tags: ["TeluguTech", "AITelugu", "Hyderabad", "TechIndia", "technews", "android", "india"]
 
 stories_per_channel: 8   # raised from 4 → 8 so each of 4 daily batches gets 2 fresh stories
 longform_per_week: 2
