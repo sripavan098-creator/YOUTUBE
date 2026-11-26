@@ -614,7 +614,7 @@ def write_script(story, angle, lcfg, cfg, note="", archetype="stake"):
 
 ROLES = {"hook", "fact", "rehook", "payoff", "loop"}
 MOODS = {"shock", "urgent", "excited", "curious", "calm", "serious"}
-_STRIP = ".,!?।…\"'“”‘’():;-"
+_STRIP = ".,!?।…\"'""''():;-"
 
 
 def _direct(d):
@@ -674,94 +674,94 @@ def _seo_tags(d, lcfg):
 
 
 def _finish(d, lcfg):
-    “””Derive the fields the rest of the pipeline reads.”””
-    for b in d[“beats”]:
-        b[“line”] = b[“line”].strip()
-        if b[“line”][-1] not in “.?!।…”:
-            b[“line”] += “.”  # terminal punctuation gives the TTS a natural pause per beat
-    lines = [b[“line”] for b in d[“beats”]]
-    d[“script”] = “ “.join(lines)
-    d[“shots”] = [b[“shot”].strip() for b in d[“beats”]]
-    # Split on whitespace, not \w: Python’s \w breaks Devanagari/Telugu words at vowel signs.
-    strip = “.,!?।…\”’””’’():;-”
+    """Derive the fields the rest of the pipeline reads."""
+    for b in d["beats"]:
+        b["line"] = b["line"].strip()
+        if b["line"][-1] not in ".?!।…":
+            b["line"] += "."  # terminal punctuation gives the TTS a natural pause per beat
+    lines = [b["line"] for b in d["beats"]]
+    d["script"] = " ".join(lines)
+    d["shots"] = [b["shot"].strip() for b in d["beats"]]
+    # Split on whitespace, not \w: Python's \w breaks Devanagari/Telugu words at vowel signs.
+    strip = ".,!?।…\"'""''():;-"
     words = set(w.strip(strip) for l in lines for w in l.split())
-    d[“emphasis”] = [w.strip(strip) for w in d.get(“emphasis”, [])
+    d["emphasis"] = [w.strip(strip) for w in d.get("emphasis", [])
                      if isinstance(w, str) and w.strip(strip) in words][:8]
     tags = []
-    for t in d.get(“hashtags”, []):
+    for t in d.get("hashtags", []):
         t = str(t).strip()
-        if t and not t.startswith(“#”):
-            t = “#” + t.replace(“ “, “”)
+        if t and not t.startswith("#"):
+            t = "#" + t.replace(" ", "")
         if t and t not in tags:
             tags.append(t)
-    if “#shorts” not in [t.lower() for t in tags]:
-        tags.insert(0, “#shorts”)
-    d[“hashtags”] = tags[:8]
+    if "#shorts" not in [t.lower() for t in tags]:
+        tags.insert(0, "#shorts")
+    d["hashtags"] = tags[:8]
     _direct(d)
-    d[“tags”] = _seo_tags(d, lcfg)
-    if d.get(“story_format”) not in STORY_FORMATS:
-        d[“story_format”] = “explainer”
-    d.setdefault(“cta_text”, lcfg.get(“cta”, “”))
-    d.setdefault(“cta_screen”, d[“cta_text”])
+    d["tags"] = _seo_tags(d, lcfg)
+    if d.get("story_format") not in STORY_FORMATS:
+        d["story_format"] = "explainer"
+    d.setdefault("cta_text", lcfg.get("cta", ""))
+    d.setdefault("cta_screen", d["cta_text"])
 
-    # Research: append 2-3 niche hashtags INSIDE the YT title — they’re clickable
+    # Research: append 2-3 niche hashtags INSIDE the YT title — they're clickable
     # and boost discovery. Keep base title ≤60 chars; hashtags go after a space.
-    base_title = str(d.get(“title”, “”)).strip()
-    yt_hashtags = lcfg.get(“yt_hashtags”, “”)  # e.g. “#HindiTech #AITools”
+    base_title = str(d.get("title", "")).strip()
+    yt_hashtags = lcfg.get("yt_hashtags", "")  # e.g. "#HindiTech #AITools"
     if yt_hashtags and len(base_title) + 1 + len(yt_hashtags) <= 100:
-        d[“title_with_hashtags”] = f”{base_title} {yt_hashtags}”
+        d["title_with_hashtags"] = f"{base_title} {yt_hashtags}"
     else:
-        d[“title_with_hashtags”] = base_title
+        d["title_with_hashtags"] = base_title
 
     # ── YouTube description: SEO-rich 5-line template ───────────────────────
     # Only build our own if the model gave something too short
-    model_desc = str(d.get(“description”, “”)).strip()
+    model_desc = str(d.get("description", "")).strip()
     if len(model_desc) < 80:
-        hook_line_desc = str(d.get(“hook_text”, “”) or d[“title”]).strip()
-        kw_line = “ | “.join(str(t).strip() for t in d.get(“search_terms”, [])[:3] if t)
-        closing_q_desc = next((str(b.get(“line”, “”)).strip() for b in reversed(beats)
-                                if “?” in b.get(“line”, “”)), “”)
-        bio_link = lcfg.get(“bio_link”, “”)
-        cta_desc = str(d.get(“cta_screen”, “”) or lcfg.get(“cta”, “”)).strip()
+        hook_line_desc = str(d.get("hook_text", "") or d["title"]).strip()
+        kw_line = " | ".join(str(t).strip() for t in d.get("search_terms", [])[:3] if t)
+        closing_q_desc = next((str(b.get("line", "")).strip() for b in reversed(beats)
+                                if "?" in b.get("line", "")), "")
+        bio_link = lcfg.get("bio_link", "")
+        cta_desc = str(d.get("cta_screen", "") or lcfg.get("cta", "")).strip()
         desc_parts = [hook_line_desc]
         if kw_line:
             desc_parts.append(kw_line)
         if closing_q_desc:
             desc_parts.append(closing_q_desc)
         if bio_link:
-            desc_parts.append(f”More: {bio_link}”)
+            desc_parts.append(f"More: {bio_link}")
         if cta_desc:
             desc_parts.append(cta_desc)
-        d[“description”] = “\n”.join(desc_parts)
+        d["description"] = "\n".join(desc_parts)
     else:
-        d[“description”] = model_desc
+        d["description"] = model_desc
 
     # ── Instagram caption: viral 5-part structure ────────────────────────────
     # Only build our own if the model gave something weak
-    model_ig = str(d.get(“ig_caption”, “”)).strip()
-    ig_hashtags_cfg = lcfg.get(“ig_hashtags”, “”)
-    all_hashtags = “ “.join(d[“hashtags”][:5])
+    model_ig = str(d.get("ig_caption", "")).strip()
+    ig_hashtags_cfg = lcfg.get("ig_hashtags", "")
+    all_hashtags = " ".join(d["hashtags"][:5])
     if ig_hashtags_cfg:
-        all_hashtags = ig_hashtags_cfg + “ “ + all_hashtags
+        all_hashtags = ig_hashtags_cfg + " " + all_hashtags
 
     if len(model_ig) < 60:
-        hook_ig = str(d.get(“hook_text”, “”) or d[“title”]).strip()
+        hook_ig = str(d.get("hook_text", "") or d["title"]).strip()
         # Pick 2 short fact lines from the middle beats
-        fact_lines = [str(b[“line”]).strip() for b in beats[1:4]
-                      if b.get(“role”) in (“fact”, “rehook”)][:2]
-        closing_q_ig = next((str(b.get(“line”, “”)).strip() for b in reversed(beats)
-                              if “?” in b.get(“line”, “”)), “”)
-        ig_parts = [hook_ig, “”]
+        fact_lines = [str(b["line"]).strip() for b in beats[1:4]
+                      if b.get("role") in ("fact", "rehook")][:2]
+        closing_q_ig = next((str(b.get("line", "")).strip() for b in reversed(beats)
+                              if "?" in b.get("line", "")), "")
+        ig_parts = [hook_ig, ""]
         if fact_lines:
-            ig_parts += fact_lines + [“”]
+            ig_parts += fact_lines + [""]
         if closing_q_ig:
-            ig_parts += [closing_q_ig, “”]
-        ig_parts += [f”👉 {str(d.get('cta_screen','Follow us')).strip()}”, “”, all_hashtags]
-        d[“ig_caption”] = “\n”.join(ig_parts)
+            ig_parts += [closing_q_ig, ""]
+        ig_parts += [f"👉 {str(d.get('cta_screen','Follow us')).strip()}", "", all_hashtags]
+        d["ig_caption"] = "\n".join(ig_parts)
     else:
         # Ensure hashtags are appended even if the model skipped them
         if all_hashtags and all_hashtags not in model_ig:
-            d[“ig_caption”] = model_ig + “\n\n” + all_hashtags
+            d["ig_caption"] = model_ig + "\n\n" + all_hashtags
     return d
 
 
