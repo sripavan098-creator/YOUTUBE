@@ -7,12 +7,22 @@ Strategy:
   1. Circuit breaker per provider — a provider that fails 3x in a row is
      skipped for 5 minutes so we don't waste retries hammering a dead endpoint.
   2. Exponential backoff with jitter on every retry.
-  3. 5-provider LLM fallback chain in order:
-       Groq → Gemini → OpenRouter → Together AI → (local Ollama if available)
+  3. 7-provider LLM fallback chain (all free, highest limits first):
+       Cerebras (1M tok/day) → NVIDIA NIM (40 rpm) →
+       Groq → Gemini → OpenRouter → Together AI → Ollama (local, unlimited)
   4. Provider keys rotated within each provider before moving to the next.
   5. Same interface as the existing _groq()/_gemini() calls so scripts.py
      can adopt it with a one-line change.
   6. TTS resilience: Sarvam → Gemini TTS → Edge TTS (always works, free).
+
+Free tier limits (as of Nov 2026):
+  Cerebras   : 1M tokens/day — best free option (gpt-oss-120b, qwen-3.8-27b)
+  NVIDIA NIM : 40 req/min  — Llama 3.3 70B, DeepSeek, Mistral
+  Groq       : 30 req/min  — fast, Llama 3.3 70B
+  Gemini     : generous daily quota on Flash models
+  OpenRouter : 50 req/day free or `:free` tagged models
+  Together AI: pay-as-you-go (keep as fallback)
+  Ollama     : unlimited, requires local GPU
 """
 
 import os
@@ -78,6 +88,81 @@ def _status_code(exc) -> Optional[int]:
 
 
 # ── Provider implementations ──────────────────────────────────────────────────
+
+def _call_cerebras(system: str, prompt: str, model: str, temp: float) -> str:
+    """Cerebras: 1M tokens/day FREE — fastest inference, OpenAI-compatible API.
+
+    Sign up: cloud.cerebras.ai → API Keys
+    Set env: CEREBRAS_API_KEY=your-key
+    Models: gpt-oss-120b (best), qwen-3.8-27b
+    Rate limit: 5 req/min, 1M tokens/day (free trial)
+    """
+    from openai import OpenAI
+    key = os.getenv("CEREBRAS_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("No CEREBRAS_API_KEY configured")
+    # Map internal model names → Cerebras models
+    cerebras_model = "gpt-oss-120b"  # best quality on Cerebras free tier
+    for attempt in range(MAX_ATTEMPTS):
+        try:
+            c = OpenAI(
+                api_key=key,
+                base_url="https://api.cerebras.ai/v1",
+                timeout=90,
+            )
+            result = c.chat.completions.create(
+                model=cerebras_model, temperature=temp, max_tokens=4000,
+                messages=[{"role": "system", "content": system},
+                          {"role": "user",   "content": prompt}],
+            ).choices[0].message.content
+            return result
+        except Exception as e:
+            code = _status_code(e)
+            if code in RETRY_STATUS and attempt < MAX_ATTEMPTS - 1:
+                wait = _jitter(BASE_DELAY, attempt)
+                print(f"  Cerebras {code} → retry in {wait:.1f}s (attempt {attempt+1})", flush=True)
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError("Cerebras exhausted all attempts")
+
+
+def _call_nvidia_nim(system: str, prompt: str, model: str, temp: float) -> str:
+    """NVIDIA NIM: 40 req/min FREE — Llama 3.3 70B, DeepSeek, Mistral, etc.
+
+    Sign up: build.nvidia.com → free account → API key
+    Set env: NVIDIA_API_KEY=nvapi-...
+    Models: meta/llama-3.3-70b-instruct, deepseek/deepseek-r1, mistralai/mistral-small-3.2
+    Rate limit: 40 req/min, no daily cap mentioned
+    """
+    from openai import OpenAI
+    key = os.getenv("NVIDIA_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("No NVIDIA_API_KEY configured")
+    nvidia_model = "meta/llama-3.3-70b-instruct"
+    for attempt in range(MAX_ATTEMPTS):
+        try:
+            c = OpenAI(
+                api_key=key,
+                base_url="https://integrate.api.nvidia.com/v1",
+                timeout=90,
+            )
+            result = c.chat.completions.create(
+                model=nvidia_model, temperature=temp, max_tokens=4000,
+                messages=[{"role": "system", "content": system},
+                          {"role": "user",   "content": prompt}],
+            ).choices[0].message.content
+            return result
+        except Exception as e:
+            code = _status_code(e)
+            if code in RETRY_STATUS and attempt < MAX_ATTEMPTS - 1:
+                wait = _jitter(BASE_DELAY, attempt)
+                print(f"  NVIDIA NIM {code} → retry in {wait:.1f}s (attempt {attempt+1})", flush=True)
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError("NVIDIA NIM exhausted all attempts")
+
 
 def _call_groq(system: str, prompt: str, model: str, temp: float) -> str:
     from openai import OpenAI, APIStatusError
@@ -230,9 +315,18 @@ def _call_ollama(system: str, prompt: str, model: str, temp: float) -> str:
     raise RuntimeError("Ollama exhausted all attempts")
 
 
-# ── Ordered provider chain ────────────────────────────────────────────────────
+# ── Ordered provider chain (highest free limits first) ────────────────────────
+# Cerebras: 1M tok/day  — BEST free, start here
+# NVIDIA NIM: 40 rpm    — 2nd best free
+# Groq: 30 rpm          — fast, reliable free tier
+# Gemini: generous daily quota
+# OpenRouter: 50 req/day free or :free models
+# Together: pay-as-you-go fallback
+# Ollama: local/unlimited, last resort (requires GPU)
 
 PROVIDERS = [
+    ("cerebras",    _call_cerebras),
+    ("nvidia_nim",  _call_nvidia_nim),
     ("groq",        _call_groq),
     ("gemini",      _call_gemini),
     ("openrouter",  _call_openrouter),
