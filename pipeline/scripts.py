@@ -37,17 +37,37 @@ STORY_FORMATS = {"explainer", "list", "versus", "timeline"}
 
 # ---------------------------------------------------------------- stage 1: angles
 
-SYS_ANGLES = """You are the head of content for an Indian tech Shorts channel.
-For the SOURCE story, propose 3 DISTINCT angles. Each angle is a different, viewer-relevant
-reason to care, not a rewording of the same headline. Prefer verified money/jobs impact, a
-change to something viewers use daily, an important qualification, what the source says
-happens next, or a myth the source can actually disprove. Never manufacture urgency, conflict,
-loss, a hidden motive, or an outcome.
+SYS_ANGLES = """You are the head of content for an Indian tech Shorts channel with 10M subscribers.
+Your job: turn a dry tech story into 3 DISTINCT angles that make a viewer's thumb stop.
 
-Vary the framing across angles when the source supports it: practical impact, a specific
-number, a useful question, or a surprising but verified qualification. Hooks should be concise
-and concrete, and every claim must be traceable to the SOURCE. Thumbnail text should summarize
-the same factual angle in 2-5 short words without adding a claim.
+VIRAL HOOK FORMULA: The hook must do ONE of these things in its first sentence:
+  A) Make the viewer scared they're LOSING something (money, job, privacy, speed)
+  B) Make them feel they know a SECRET others don't
+  C) Hit them with a NUMBER so specific it demands an explanation
+  D) Ask a YES/NO question they don't know the answer to
+  E) Flip a belief they've held for years
+  F) Create FOMO with a real deadline
+
+For the SOURCE story, propose 3 DISTINCT angles. Each must:
+1. Use a DIFFERENT viral formula from the list above
+2. Have a concrete hook_idea that works as a spoken first sentence under 10 words
+3. Use only facts traceable to the SOURCE — never invent stakes, quotes or outcomes
+4. Target an Indian viewer's daily life (UPI, Jio, WhatsApp, Android, job, money)
+
+THUMBNAIL TEXT: Each angle's hook_idea should ALSO work as 2-5 words on a thumbnail.
+Think: would this make someone stop scrolling if they saw it on a black background?
+
+Strong examples:
+  ✓ "Your Aadhaar was just accessed 4 times today" (stake, specific, personal)
+  ✓ "This free app saved me ₹18,000 last month" (secret + number)
+  ✓ "ChatGPT will kill THIS type of job by December" (countdown + threat)
+  ✓ "India's biggest startup just went broke — here's the sign you missed" (contrarian)
+
+Weak angles to avoid:
+  ✗ "Big news in AI" — no personal stake
+  ✗ Repeating the headline
+  ✗ Manufactured danger not in the source
+  ✗ Passive framing ("it has been announced that...")
 
 Return STRICT JSON:
 {"angles": [
@@ -83,9 +103,8 @@ stakes, force shock, or repeat the same point to fill time.
 
 LANGUAGE (the most important rule):
 {style}
-Write primarily in the native script, but keep technical terms, acronyms, and brand names
-in Latin exactly as commonly written (for example: FSSAI, Bromate, AI, Google). Do not
-invent native-script spellings for English technical terms.
+Every line must be written ONLY in the native script. No Latin letters at all. Product and
+company names are written the way people say them, in native script.
 
 Return STRICT JSON:
 {{
@@ -109,27 +128,33 @@ Return STRICT JSON:
  "hashtags": ["#shorts", "...5-7 tags, mix of broad and specific, native or English as people search"]
 }}
 
-HOOK (beats[0]):
-- {hook_max_words} words MAX and under {hook_max_seconds} seconds. Never start with a greeting,
-    brand name, channel name, or "this video".
-- Use the HOOK ARCHETYPE below only when it fits the verified source facts. Ask a clear
-    question or make an accurate promise; do not inflate stakes or imply unsupported danger.
-- Speak to the viewer naturally where appropriate. The 2-5 word hook_text must differ from
-    the spoken line and must not add a claim.
+HOOK (beats[0]) — this is where viewers decide to stay or scroll:
+- {hook_max_words} words MAX. Spoken in under {hook_max_seconds} seconds. NEVER start with
+  "today", "hello", "నమస్కారం", "नमस्कार", or any greeting.
+- Use the HOOK ARCHETYPE below. The archetype describes what emotion to trigger.
+- Speak directly TO the viewer: "మీరు", "আপনার", "आप" — make it their problem, not an event.
+- The hook_text (shown huge on screen) MUST be different from the first spoken line —
+  it's a 2-5 word PUNCH that the spoken line then expands.
+- NEVER open with the brand name, channel name, or "this video".
 
-EVIDENCE (middle beats):
-- Give at least three distinct, source-backed facts that support the central claim.
-- Keep each fact concrete, make its connection clear, and avoid rephrasing the same point.
+EVIDENCE (middle beats, role="fact"):
+- Give at least three DISTINCT facts. Each one adds something new — no rephrasing.
+- Concrete over abstract: "₹47,000 crore lost" beats "a lot of money was lost".
+- Short sentences — the viewer is watching, not reading.
 
-RE-HOOK (middle beat, role="rehook"):
-- Add a useful qualification, consequence, or detail that changes how the claim reads.
-- Do not manufacture a twist or imply a fact the source does not establish.
+RE-HOOK (one middle beat, role="rehook"):
+- A sharp turn: a consequence, contradiction, or detail that reframes everything before it.
+- Must be sourced. Its job is to prevent drop-off at the 20-30 second mark.
+- Good: "కానీ ఇక్కడ ఒక twist ఉంది" → then the twist. Bad: manufactured drama.
 
 PAYOFF (beats[-2], role="payoff"):
-- Answer the question raised by the hook and explain the practical takeaway.
+- Answers the hook's question directly. Delivers the practical takeaway.
+- The viewer should feel they learned something they can use or share.
 
-LOOP (beats[-1], role="loop"):
-- Ask a specific, relevant question viewers can answer from their experience or opinion.
+LOOP-GAP (beats[-1], role="loop"):
+- A specific, open question that CANNOT be answered without experience or opinion.
+- Good: "మీకు ఇలాంటి experience వచ్చిందా?" Bad: "What do you think about AI?"
+- This is the comment-bait beat — a good loop question doubles engagement rate.
 
 HOOK ARCHETYPE for this video: {archetype}
 
@@ -589,7 +614,7 @@ def write_script(story, angle, lcfg, cfg, note="", archetype="stake"):
 
 ROLES = {"hook", "fact", "rehook", "payoff", "loop"}
 MOODS = {"shock", "urgent", "excited", "curious", "calm", "serious"}
-_STRIP = ".,!?।…\"'“”‘’():;-"
+_STRIP = ".,!?।…\"'""''():;-"
 
 
 def _direct(d):
@@ -650,25 +675,26 @@ def _seo_tags(d, lcfg):
 
 def _finish(d, lcfg):
     """Derive the fields the rest of the pipeline reads."""
-    for beat in d["beats"]:
-        beat["line"] = beat["line"].strip()
-        if beat["line"][-1] not in ".?!।…":
-            beat["line"] += "."
-    lines = [beat["line"] for beat in d["beats"]]
+    for b in d["beats"]:
+        b["line"] = b["line"].strip()
+        if b["line"][-1] not in ".?!।…":
+            b["line"] += "."  # terminal punctuation gives the TTS a natural pause per beat
+    lines = [b["line"] for b in d["beats"]]
     d["script"] = " ".join(lines)
-    d["shots"] = [beat["shot"].strip() for beat in d["beats"]]
-    strip = ".,!?।…\"'“”‘’():;-"
-    words = set(word.strip(strip) for line in lines for word in line.split())
-    d["emphasis"] = [word.strip(strip) for word in d.get("emphasis", [])
-                     if isinstance(word, str) and word.strip(strip) in words][:8]
+    d["shots"] = [b["shot"].strip() for b in d["beats"]]
+    # Split on whitespace, not \w: Python's \w breaks Devanagari/Telugu words at vowel signs.
+    strip = ".,!?।…\"'""''():;-"
+    words = set(w.strip(strip) for l in lines for w in l.split())
+    d["emphasis"] = [w.strip(strip) for w in d.get("emphasis", [])
+                     if isinstance(w, str) and w.strip(strip) in words][:8]
     tags = []
-    for tag in d.get("hashtags", []):
-        tag = str(tag).strip()
-        if tag and not tag.startswith("#"):
-            tag = "#" + tag.replace(" ", "")
-        if tag and tag not in tags:
-            tags.append(tag)
-    if "#shorts" not in [tag.lower() for tag in tags]:
+    for t in d.get("hashtags", []):
+        t = str(t).strip()
+        if t and not t.startswith("#"):
+            t = "#" + t.replace(" ", "")
+        if t and t not in tags:
+            tags.append(t)
+    if "#shorts" not in [t.lower() for t in tags]:
         tags.insert(0, "#shorts")
     d["hashtags"] = tags[:8]
     _direct(d)
@@ -677,71 +703,73 @@ def _finish(d, lcfg):
         d["story_format"] = "explainer"
     d.setdefault("cta_text", lcfg.get("cta", ""))
     d.setdefault("cta_screen", d["cta_text"])
+
+    # Research: append 2-3 niche hashtags INSIDE the YT title — they're clickable
+    # and boost discovery. Keep base title ≤60 chars; hashtags go after a space.
     base_title = str(d.get("title", "")).strip()
-    yt_hashtags = str(lcfg.get("yt_hashtags", "")).strip()
+    yt_hashtags = lcfg.get("yt_hashtags", "")  # e.g. "#HindiTech #AITools"
     if yt_hashtags and len(base_title) + 1 + len(yt_hashtags) <= 100:
         d["title_with_hashtags"] = f"{base_title} {yt_hashtags}"
     else:
         d["title_with_hashtags"] = base_title
+
+    # ── YouTube description: SEO-rich 5-line template ───────────────────────
+    # Only build our own if the model gave something too short
     model_desc = str(d.get("description", "")).strip()
     if len(model_desc) < 80:
-        description_parts = [str(d.get("hook_text") or d["title"]).strip()]
-        keywords = " | ".join(str(term).strip() for term in d.get("search_terms", [])[:3] if term)
-        closing_question = next(
-            (str(beat.get("line", "")).strip() for beat in reversed(d["beats"])
-             if "?" in str(beat.get("line", ""))),
-            "",
-        )
-        if keywords:
-            description_parts.append(keywords)
-        if closing_question:
-            description_parts.append(closing_question)
-        bio_link = str(lcfg.get("bio_link", "")).strip()
+        hook_line_desc = str(d.get("hook_text", "") or d["title"]).strip()
+        kw_line = " | ".join(str(t).strip() for t in d.get("search_terms", [])[:3] if t)
+        closing_q_desc = next((str(b.get("line", "")).strip() for b in reversed(beats)
+                                if "?" in b.get("line", "")), "")
+        bio_link = lcfg.get("bio_link", "")
+        cta_desc = str(d.get("cta_screen", "") or lcfg.get("cta", "")).strip()
+        desc_parts = [hook_line_desc]
+        if kw_line:
+            desc_parts.append(kw_line)
+        if closing_q_desc:
+            desc_parts.append(closing_q_desc)
         if bio_link:
-            description_parts.append("More: " + bio_link)
-        cta_description = str(d.get("cta_screen") or lcfg.get("cta", "")).strip()
-        if cta_description:
-            description_parts.append(cta_description)
-        d["description"] = "\n".join(description_parts)
+            desc_parts.append(f"More: {bio_link}")
+        if cta_desc:
+            desc_parts.append(cta_desc)
+        d["description"] = "\n".join(desc_parts)
     else:
         d["description"] = model_desc
 
-    model_caption = str(d.get("ig_caption", "")).strip()
-    configured_tags = str(lcfg.get("ig_hashtags", "")).split()
-    all_tags = list(dict.fromkeys(configured_tags + d["hashtags"][:5]))
-    all_hashtags = " ".join(all_tags)
-    if len(model_caption) < 60:
-        hook_caption = str(d.get("hook_text") or d["title"]).strip()
-        fact_lines = [str(beat["line"]).strip() for beat in d["beats"][1:4]
-                      if beat.get("role") in ("fact", "rehook")][:2]
-        closing_question = next(
-            (str(beat.get("line", "")).strip() for beat in reversed(d["beats"])
-             if "?" in str(beat.get("line", ""))),
-            "",
-        )
-        caption_parts = [hook_caption, ""]
+    # ── Instagram caption: viral 5-part structure ────────────────────────────
+    # Only build our own if the model gave something weak
+    model_ig = str(d.get("ig_caption", "")).strip()
+    ig_hashtags_cfg = lcfg.get("ig_hashtags", "")
+    all_hashtags = " ".join(d["hashtags"][:5])
+    if ig_hashtags_cfg:
+        all_hashtags = ig_hashtags_cfg + " " + all_hashtags
+
+    if len(model_ig) < 60:
+        hook_ig = str(d.get("hook_text", "") or d["title"]).strip()
+        # Pick 2 short fact lines from the middle beats
+        fact_lines = [str(b["line"]).strip() for b in beats[1:4]
+                      if b.get("role") in ("fact", "rehook")][:2]
+        closing_q_ig = next((str(b.get("line", "")).strip() for b in reversed(beats)
+                              if "?" in b.get("line", "")), "")
+        ig_parts = [hook_ig, ""]
         if fact_lines:
-            caption_parts += fact_lines + [""]
-        if closing_question:
-            caption_parts += [closing_question, ""]
-        cta_caption = str(d.get("cta_screen") or "").strip()
-        if cta_caption:
-            caption_parts += [cta_caption, ""]
-        caption_parts.append(all_hashtags)
-        d["ig_caption"] = "\n".join(caption_parts)
+            ig_parts += fact_lines + [""]
+        if closing_q_ig:
+            ig_parts += [closing_q_ig, ""]
+        ig_parts += [f"👉 {str(d.get('cta_screen','Follow us')).strip()}", "", all_hashtags]
+        d["ig_caption"] = "\n".join(ig_parts)
     else:
-        d["ig_caption"] = model_caption
-        if all_hashtags and all_hashtags not in model_caption:
-            d["ig_caption"] += "\n\n" + all_hashtags
+        # Ensure hashtags are appended even if the model skipped them
+        if all_hashtags and all_hashtags not in model_ig:
+            d["ig_caption"] = model_ig + "\n\n" + all_hashtags
     return d
 
 
 SYS_POLISH = """You are a careful editor for {lang_name} Shorts. Below is a draft script as
 JSON. Improve ONLY the wording of the "line" fields for clarity and natural delivery.
 Keep: claim, supporting_facts, the same number of beats, the same facts,
-roles/moods/shots/slam/stat fields, story_format, cta_text, and the original language.
-Keep standard technical terms, acronyms, and brand names in Latin. Hook <= {hook_max_words}
-words, and a closing question. Do not add facts.
+roles/moods/shots/slam/stat fields, story_format, cta_text, native script only
+(no Latin letters), hook <= {hook_max_words} words, and a closing question. Do not add facts.
 Return the FULL JSON again with the same keys. ONLY raw JSON."""
 
 
