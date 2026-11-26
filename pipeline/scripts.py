@@ -384,10 +384,25 @@ def _gemini(system, prompt, model, temperature=0.7, timeout=60):
 
 
 def _providers(cfg):
-    p = [(_groq, cfg["model_primary"]), (_gemini, cfg["model_fallback"])]
+    """Return (fn, model) pairs.
+
+    The first pair uses our resilient multi-provider llm() wrapper which
+    automatically cascades through Groq → Gemini → OpenRouter → Together → Ollama.
+    The model name is passed through for Groq/Gemini selection; the resilience
+    layer maps it to equivalents on other providers automatically.
+    """
+    from pipeline.api_resilience import llm as _resilient_llm
+
+    # Wrap the resilient caller so it matches the (system, prompt, model, temp) signature
+    def _resilient(system, prompt, model, temp=0.75):
+        return _resilient_llm(system, prompt, model, temp)
+
+    primary = [(_resilient, cfg["model_primary"])]
+    # Keep original direct providers as final fallbacks in case resilience layer itself errors
+    fallbacks = [(_groq, cfg["model_primary"]), (_gemini, cfg["model_fallback"])]
     if cfg.get("model_fallback2"):
-        p.append((_gemini, cfg["model_fallback2"]))
-    return p
+        fallbacks.append((_gemini, cfg["model_fallback2"]))
+    return primary + fallbacks
 
 
 def _dump(tag, text):

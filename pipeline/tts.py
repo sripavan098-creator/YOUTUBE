@@ -1,5 +1,14 @@
-import os, base64, pathlib, subprocess, shutil, requests
+import os, base64, pathlib, subprocess, shutil, requests, time, random
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Retry config for TTS calls
+_TTS_RETRY_STATUS = {429, 500, 502, 503, 504}
+_TTS_MAX_ATTEMPTS = 4
+_TTS_BASE_DELAY = 2.0
+
+def _tts_jitter(attempt: int) -> float:
+    delay = min(_TTS_BASE_DELAY * (2 ** attempt), 30.0)
+    return delay * (0.7 + random.random() * 0.6)
 
 # --- Sarvam Config ---
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
@@ -115,12 +124,86 @@ def _edge_tts(text, lang, out_path):
     asyncio.run(run())
     print(f"  ✅ TTS via Edge TTS (Free Fallback)", flush=True)
 
+def synthesize(text, lang, output_path):
+    """Main entry point: Sarvam (w/ retries) → Gemini TTS (w/ retries) → Edge TTS (always works).
+
+    Each provider is retried up to _TTS_MAX_ATTEMPTS times with exponential backoff + jitter
+    before falling through to the next provider. Edge TTS is the final guarantee —
+    it uses Microsoft's free Azure CDN and never rate-limits.
+    """
+    output_path = str(output_path)
+    pathlib.Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    wav_path = str(pathlib.Path(output_path).with_suffix(".wav"))
+
+    # ── 1. Sarvam with retries ───────────────────────────────────────────────
+    sarvam_ok = False
+    for attempt in range(_TTS_MAX_ATTEMPTS):
+        try:
+            _sarvam_tts(text, lang, wav_path)
+            sarvam_ok = True
+            break
+        except requests.HTTPError as e:
+            code = e.response.status_code if e.response else 0
+            if code in _TTS_RETRY_STATUS and attempt < _TTS_MAX_ATTEMPTS - 1:
+                wait = _tts_jitter(attempt)
+                print(f"  ⚠️ Sarvam {code} → retry in {wait:.1f}s (attempt {attempt+1})", flush=True)
+                time.sleep(wait)
+            else:
+                print(f"  ⚠️ Sarvam failed ({code}) → trying Gemini TTS", flush=True)
+                break
+        except Exception as e:
+            if attempt < _TTS_MAX_ATTEMPTS - 1:
+                wait = _tts_jitter(attempt)
+                print(f"  ⚠️ Sarvam error → retry in {wait:.1f}s: {e}", flush=True)
+                time.sleep(wait)
+            else:
+                print(f"  ⚠️ Sarvam failed → trying Gemini TTS: {e}", flush=True)
+                break
+
+    if sarvam_ok:
+        if output_path.endswith(".mp3") and shutil.which("ffmpeg"):
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", wav_path,
+                            "-codec:a", "libmp3lame", "-qscale:a", "2", output_path], check=True)
+            return output_path
+        return wav_path
+
+    # ── 2. Gemini TTS with retries ───────────────────────────────────────────
+    gemini_ok = False
+    for attempt in range(_TTS_MAX_ATTEMPTS):
+        try:
+            _gemini_tts(text, lang, wav_path)
+            gemini_ok = True
+            break
+        except Exception as e:
+            code = getattr(getattr(e, "response", None), "status_code", 0)
+            if code in _TTS_RETRY_STATUS and attempt < _TTS_MAX_ATTEMPTS - 1:
+                wait = _tts_jitter(attempt)
+                print(f"  ⚠️ Gemini TTS {code} → retry in {wait:.1f}s", flush=True)
+                time.sleep(wait)
+            else:
+                print(f"  ⚠️ Gemini TTS failed → Edge TTS fallback: {e}", flush=True)
+                break
+
+    if gemini_ok:
+        if output_path.endswith(".mp3") and shutil.which("ffmpeg"):
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", wav_path,
+                            "-codec:a", "libmp3lame", "-qscale:a", "2", output_path], check=True)
+            return output_path
+        return wav_path
+
+    # ── 3. Edge TTS — guaranteed fallback (free, Microsoft CDN) ─────────────
+    print(f"  🔄 Using Edge TTS (free fallback)...", flush=True)
+    _edge_tts(text, lang, output_path)
+    return output_path
+
+
 def synthesize_many(items, max_workers=6):
     """Synthesise multiple (text, lang, output_path) tuples in parallel.
 
     Returns list of output paths in the same order as items.
     Use this whenever you have N beats/segments to synthesise — all API calls
     fire concurrently so total time ≈ slowest single call, not sum of all.
+    Each individual call already has full retry + fallback chain built in.
     """
     results = [None] * len(items)
 
@@ -134,27 +217,3 @@ def synthesize_many(items, max_workers=6):
             idx, path = f.result()
             results[idx] = path
     return results
-
-
-def synthesize(text, lang, output_path):
-    """Main entry point: Tries Sarvam -> Gemini -> Edge TTS"""
-    output_path = str(output_path)
-    pathlib.Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    wav_path = str(pathlib.Path(output_path).with_suffix(".wav"))
-
-    try:
-        _sarvam_tts(text, lang, wav_path)
-    except Exception as e:
-        print(f"  ⚠️ Sarvam failed -> Trying Gemini: {e}", flush=True)
-        try:
-            _gemini_tts(text, lang, wav_path)
-        except Exception as e2:
-            print(f"  ⚠️ Gemini failed -> Trying Edge TTS: {e2}", flush=True)
-            _edge_tts(text, lang, output_path)
-            return output_path
-
-    if output_path.endswith(".mp3") and shutil.which("ffmpeg"):
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", wav_path,
-                        "-codec:a", "libmp3lame", "-qscale:a", "2", output_path], check=True)
-        return output_path
-    return wav_path

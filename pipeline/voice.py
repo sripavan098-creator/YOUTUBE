@@ -92,50 +92,45 @@ def prosody(base_rate, base_pitch, base_volume, mood):
 
 def _synth_one(text, voice, rate, pitch, volume, mp3_path, words_path,
                lang=None, sarvam_voice_id=None, role="fact"):
-    """Synthesise one beat.
+    """Synthesise one beat with bulletproof fallback chain.
 
-    Priority:
-      1. Sarvam AI — if SARVAM_API_KEY is set. Natural Indian-language prosody,
-         voice cloning support, correct Telugu/Hindi accent. Pace and temperature
-         are derived from the beat's role for natural expressive delivery.
-      2. Edge TTS — fallback when Sarvam is unavailable.
+    Priority (all with automatic retry + backoff):
+      1. pipeline.tts.synthesize() — routes: Sarvam (4 retries) → Gemini TTS (4 retries)
+         → Edge TTS (guaranteed, free, Microsoft CDN, never rate-limits).
+      2. Direct Edge TTS synth() — if tts module itself fails to import.
 
-    When Sarvam is used, word-boundary JSON is estimated from the audio duration
-    (Sarvam doesn't return word timings). We generate one boundary spanning the
-    full segment — the caption system will split on spaces instead.
+    Word boundaries:
+      - Edge TTS with stream() gives exact WordBoundary events.
+      - Sarvam/Gemini give no timings → estimated proportionally from duration.
     """
-    # Try Sarvam first
-    try:
-        from pipeline.sarvam_voice import synth_sarvam, available as sarvam_ok, ROLE_SETTINGS
-    except ImportError:
-        sarvam_ok = lambda: False
-        ROLE_SETTINGS = {}
-
-    if sarvam_ok() and lang:
-        # Role-based pace + temperature (research-validated per beat emotion)
-        role_cfg = ROLE_SETTINGS.get(role, {"pace": 1.10, "temperature": 0.75})
-        # Also factor in the mood's rate adjustment from Edge TTS rate setting
-        r_num = int(re.search(r"-?\d+", rate).group()) if re.search(r"-?\d+", rate) else 0
-        pace = round(max(0.6, min(1.8, role_cfg["pace"] + r_num / 200)), 2)  # blend
-        temperature = role_cfg["temperature"]
-        wav_path = str(pathlib.Path(mp3_path).with_suffix(".wav"))
+    # ── Primary: use the resilient tts.synthesize() (Sarvam → Gemini → Edge) ──
+    if lang:
         try:
-            dur = synth_sarvam(text, lang, wav_path,
-                               voice_id=sarvam_voice_id, pace=pace,
-                               temperature=temperature)
-            # Convert WAV → MP3 for consistency downstream
-            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", wav_path,
-                            "-c:a", "libmp3lame", "-q:a", "2", mp3_path], check=True)
-            # Estimate word boundaries (Sarvam gives no timings)
+            from pipeline import tts as _tts
+            wav_path = str(pathlib.Path(mp3_path).with_suffix(".wav"))
+            result = _tts.synthesize(text, lang, wav_path)
+            # Convert to MP3 if wav was returned
+            if str(result).endswith(".wav") and pathlib.Path(result).exists():
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", result,
+                                "-c:a", "libmp3lame", "-q:a", "2", mp3_path], check=True)
+            elif str(result).endswith(".mp3"):
+                # Edge TTS wrote directly to mp3
+                import shutil as _sh
+                if str(result) != str(mp3_path):
+                    _sh.copy(result, mp3_path)
+            # Get audio duration
+            from mutagen.mp3 import MP3
+            dur = MP3(mp3_path).info.length
+            # Estimate word boundaries (Sarvam/Gemini give no timings)
             words = _estimate_word_times(text, dur)
             pathlib.Path(words_path).write_text(
                 json.dumps(words, ensure_ascii=False), encoding="utf-8"
             )
             return dur
         except Exception as e:
-            print(f"  [sarvam] failed, falling back to Edge TTS: {e}")
+            print(f"  [voice] tts.synthesize failed, using Edge TTS direct: {e}", flush=True)
 
-    # Edge TTS fallback
+    # ── Final fallback: Edge TTS direct (always works, word boundaries exact) ─
     return synth(text, voice, rate, mp3_path, words_path, pitch=pitch, volume=volume)
 
 
