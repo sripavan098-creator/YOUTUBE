@@ -1,6 +1,7 @@
 import datetime
 import json
 import pathlib
+import time
 from zoneinfo import ZoneInfo
 
 from google.oauth2.credentials import Credentials
@@ -9,6 +10,31 @@ from googleapiclient.http import MediaFileUpload
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 IST = ZoneInfo("Asia/Kolkata")
+
+# ── Shorts-specific tags always appended to maximize Shorts feed discovery ───
+_SHORTS_BOOST_TAGS = ["shorts", "youtubeshorts", "shortsvideo", "viralshorts", "trending"]
+
+
+def _first_comment_yt(lang: str) -> str:
+    """Seed comment that the YT algorithm reads in the first hour.
+
+    A question drives replies (comment velocity = ranking signal).
+    Posted immediately after upload while the video is still private
+    so it's ready the moment the video goes public.
+    """
+    questions = {
+        "te": (
+            "మీకు ఇది useful గా అనిపించిందా? 👇 comment చేయండి!\n"
+            "🔔 Bell icon నొక్కండి — రోజూ fresh tech news!\n"
+            "#TeluguTech #Shorts"
+        ),
+        "hi": (
+            "क्या यह आपके लिए useful था? 👇 comment करें!\n"
+            "🔔 Bell icon दबाएं — हर दिन fresh tech news!\n"
+            "#HindiTech #Shorts"
+        ),
+    }
+    return questions.get(lang, questions["hi"])
 
 
 def _credentials(channel):
@@ -103,7 +129,20 @@ def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=
             parts.append(cta)
         desc_body = "\n".join(parts)
 
-    tags = script.get("tags") or [h.lstrip("#") for h in script["hashtags"]][:15]
+    # Tags: model's search phrases + hashtag words + Shorts boost tags (deduplicated)
+    base_tags = script.get("tags") or [h.lstrip("#") for h in script["hashtags"]][:15]
+    seen_tags = {t.lower() for t in base_tags}
+    tags = list(base_tags)
+    for bt in _SHORTS_BOOST_TAGS:
+        if bt not in seen_tags:
+            tags.append(bt)
+            seen_tags.add(bt)
+    # Add channel-specific tags from config
+    for ct in lcfg.get("extra_tags", []):
+        if ct.lower() not in seen_tags:
+            tags.append(ct)
+            seen_tags.add(ct.lower())
+    tags = tags[:30]  # YT allows up to 500 chars, ~30 short tags fits safely
     kw = ", ".join(script.get("search_terms", [])[:6])
     # Use title_with_hashtags if available (2-3 niche hashtags appended inside the title)
     upload_title = script.get("title_with_hashtags") or script["title"]
@@ -149,6 +188,29 @@ def upload(channel, lcfg, step_min, index, script, video, source_url, public_ok=
         except Exception as e:
             print(f"  [yt] WARNING: thumbnail upload failed (need verified phone?): {e}",
                   flush=True)
+
+    # ── Seed first comment immediately (engagement signal in hour-1) ──────────
+    # YouTube's algorithm checks comment velocity in the first hour after publish.
+    # Even on a private video, posting now means the comment is ready the moment
+    # the video goes public — no delay, full engagement boost.
+    try:
+        time.sleep(3)  # brief pause so the video resource is fully indexed
+        first_comment = _first_comment_yt(lcfg.get("lang", "hi"))
+        yt.commentThreads().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "videoId": video_id,
+                    "topLevelComment": {
+                        "snippet": {"textOriginal": first_comment}
+                    }
+                }
+            }
+        ).execute()
+        print(f"  [yt] first comment seeded for {video_id}", flush=True)
+    except Exception as e:
+        # Non-fatal — comments may be disabled or API quota exceeded
+        print(f"  [yt] first comment skipped: {e}", flush=True)
 
     return video_id, slot.isoformat(), status["privacyStatus"]
 
