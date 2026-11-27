@@ -280,7 +280,7 @@ def vision_ok(image_path, line, model=None):
     keys = gemini_keys()
     if not keys:
         return True
-    model = model or os.getenv("VISION_MODEL", "gemini-3.5-flash-lite")
+    model = model or os.getenv("VISION_MODEL", "gemini-1.5-flash-latest")
     try:
         import requests
 

@@ -147,7 +147,7 @@ def judge(script, lang, model=None):
     keys = gemini_keys()
     if not keys:
         return script
-    model = model or os.getenv("VISION_MODEL", "gemini-3.5-flash-lite")
+    model = model or os.getenv("VISION_MODEL", "gemini-1.5-flash-latest")
     lines = [beat["line"] for beat in script.get("beats", [])]
     name = "Telugu" if lang == "te" else "Hindi"
     prompt = (

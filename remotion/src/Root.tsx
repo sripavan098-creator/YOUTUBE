@@ -58,7 +58,7 @@ export const RemotionRoot = () => (
         durationInFrames: props.items.reduce((a, b) => a + b.frames, 0) || 300,
       })}
     />
-  
+
       <Composition
         id="GuluShort"
         component={GuluShort}
