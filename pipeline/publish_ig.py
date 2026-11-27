@@ -132,21 +132,41 @@ def _post_story_cover(client, ig_cover_path: pathlib.Path, caption: str):
         print(f"  ⚠️  Story post failed (non-fatal): {e}")
 
 
+def _instagrapi_available() -> bool:
+    """Check if instagrapi is installed."""
+    try:
+        import instagrapi  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _has_ig_credentials(lang: str) -> bool:
+    """Check if IG username+password are set for this language."""
+    user = os.getenv(f"IG_USER_{lang.upper()}", "").strip()
+    pwd = os.getenv(f"IG_PASS_{lang.upper()}", "").strip()
+    return bool(user and pwd)
+
+
 def publish(lang, path, caption, name=None, thumbnail=None, ig_cover=None, post_story=True):
-    """Upload a Reel for the scheduled pipeline and return its media ID.
+    """Upload a Reel — tries instagrapi direct first, falls back to Make.com webhook.
+
+    Priority:
+      1. instagrapi (direct) — if installed AND IG_USER_*/IG_PASS_* set in .env
+      2. Make.com webhook    — if MAKE_IG_WEBHOOK_URL set in .env
+      3. Raises RuntimeError — logs clearly what's missing
 
     thumbnail: optional path to a 1080×1920 JPEG cover image.
-               When None, we extract one from the video at 0.5 s automatically
-               so the Reel always has a clean hook-card cover.
     ig_cover:  optional designed 1080×1920 cover for the Story post.
     post_story: if True (default), also post a Story with the cover image.
     """
     import time
+
     video_path = pathlib.Path(path)
     if not video_path.is_file():
         raise FileNotFoundError(f"Video not found: {video_path}")
 
-    # Resolve cover image: prefer the designed IG cover, fall back to ffmpeg extract
+    # Resolve cover image
     if thumbnail and pathlib.Path(thumbnail).is_file():
         cover_path = pathlib.Path(thumbnail)
     elif ig_cover and pathlib.Path(ig_cover).is_file():
@@ -154,66 +174,91 @@ def publish(lang, path, caption, name=None, thumbnail=None, ig_cover=None, post_
     else:
         cover_path = _extract_cover(video_path)
 
-    client = _get_client(lang)
+    # ── Path 1: instagrapi direct upload ─────────────────────────────────────
+    if _instagrapi_available() and _has_ig_credentials(lang):
+        print(f"  [ig] using instagrapi direct for lang={lang}", flush=True)
+        client = _get_client(lang)
+        extra = {}
+        if cover_path and cover_path.is_file():
+            extra["thumbnail"] = cover_path
 
-    # instagrapi's clip_upload accepts an optional `thumbnail` kwarg since v2.x
-    extra = {}
-    if cover_path and cover_path.is_file():
-        extra["thumbnail"] = cover_path
+        attempts = 3
+        last_err = None
+        media_pk = None
+        for attempt in range(1, attempts + 1):
+            try:
+                media = client.clip_upload(path=video_path, caption=caption, **extra)
+                media_pk = str(media.pk)
+                user_handle = os.getenv(f"IG_USER_{lang.upper()}", lang)
+                print(f"  ✅ Reel posted to @{user_handle} (cover={'yes' if extra else 'no'})",
+                      flush=True)
+                break
+            except Exception as e:
+                last_err = e
+                msg = str(e).lower()
+                if "login_required" in msg or "not_logged_in" in msg:
+                    print(f"  ⚠️  Session expired attempt {attempt}, re-logging in...", flush=True)
+                    user = os.getenv(f"IG_USER_{lang.upper()}")
+                    with _lock:
+                        _clients.pop(user, None)
+                    sess = _session_path(user) if user else None
+                    if sess and sess.exists():
+                        sess.unlink(missing_ok=True)
+                    try:
+                        client = _get_client(lang)
+                    except Exception as login_err:
+                        print(f"  ❌ Re-login failed: {login_err}", flush=True)
+                        break
+                elif attempt < attempts:
+                    print(f"  ⚠️  clip_upload attempt {attempt} failed: {e} — retrying 5s...",
+                          flush=True)
+                    time.sleep(5)
+                else:
+                    print(f"  ❌ clip_upload failed after {attempts} attempts: {e}", flush=True)
 
-    attempts = 3
-    last_err = None
-    media_pk = None
-    for attempt in range(1, attempts + 1):
-        try:
-            media = client.clip_upload(path=video_path, caption=caption, **extra)
-            media_pk = str(media.pk)
-            print(f"✅ Reel posted to @{os.getenv(f'IG_USER_{lang.upper()}')} "
-                  f"(cover={'yes' if extra else 'no'})")
-            break
-        except Exception as e:
-            last_err = e
-            msg = str(e).lower()
-            if "login_required" in msg or "not_logged_in" in msg:
-                print(f"⚠️  Session expired on attempt {attempt}, re-logging in...")
-                user = os.getenv(f"IG_USER_{lang.upper()}")
-                with _lock:
-                    _clients.pop(user, None)
-                sess = _session_path(user) if user else None
-                if sess and sess.exists():
-                    sess.unlink(missing_ok=True)
-                try:
-                    client = _get_client(lang)
-                except Exception as login_err:
-                    print(f"❌ Re-login failed: {login_err}")
-                    raise
-            elif attempt < attempts:
-                print(f"⚠️  clip_upload attempt {attempt} failed: {e} — retrying in 5s...")
-                time.sleep(5)
-            else:
-                raise RuntimeError(f"clip_upload failed after {attempts} attempts: {last_err}") \
-                    from last_err
+        if media_pk:
+            # First-comment hashtag dump
+            try:
+                time.sleep(3)
+                client.media_comment(media_pk, _first_comment_tags(lang))
+                print("  💬 First-comment hashtags posted ✅", flush=True)
+            except Exception as e:
+                print(f"  ⚠️  First-comment failed (non-fatal): {e}", flush=True)
+            # Story auto-post
+            if post_story and cover_path and cover_path.is_file():
+                time.sleep(2)
+                _post_story_cover(client, cover_path, caption)
+            return media_pk
 
-    if not media_pk:
-        raise RuntimeError(f"clip_upload failed: {last_err}") from last_err
+        # instagrapi failed — fall through to Make.com
+        print(f"  ⚠️  instagrapi failed — trying Make.com fallback", flush=True)
 
-    # ── First-comment hashtag dump ───────────────────────────────────────────
-    # Keeps the caption clean while pumping 25-30 hashtags into discovery.
-    # Instagram's algorithm reads first-comment tags like caption tags.
-    try:
-        time.sleep(3)  # brief pause so the Reel is indexed before the comment
-        first_comment = _first_comment_tags(lang)
-        client.media_comment(media_pk, first_comment)
-        print("  💬 First-comment hashtags posted ✅")
-    except Exception as e:
-        print(f"  ⚠️  First-comment failed (non-fatal): {e}")
+    elif not _instagrapi_available():
+        print(f"  [ig] instagrapi not installed — trying Make.com", flush=True)
+    elif not _has_ig_credentials(lang):
+        print(f"  [ig] IG_USER_{lang.upper()}/IG_PASS_{lang.upper()} not set — trying Make.com",
+              flush=True)
 
-    # ── Story auto-post ──────────────────────────────────────────────────────
-    if post_story and cover_path and cover_path.is_file():
-        time.sleep(2)
-        _post_story_cover(client, cover_path, caption)
+    # ── Path 2: Make.com webhook ──────────────────────────────────────────────
+    if MAKE_WEBHOOK_URL:
+        print(f"  [ig] using Make.com webhook for lang={lang}", flush=True)
+        ok = upload_reel(str(video_path), caption, lang)
+        if ok:
+            return "make_com_queued"
+        raise RuntimeError("Make.com webhook upload failed")
 
-    return media_pk
+    # ── Both paths failed — tell user exactly what to fix ────────────────────
+    missing = []
+    if not _instagrapi_available():
+        missing.append("run: pip install instagrapi")
+    if not _has_ig_credentials(lang):
+        missing.append(f"set IG_USER_{lang.upper()} and IG_PASS_{lang.upper()} in .env")
+    if not MAKE_WEBHOOK_URL:
+        missing.append("set MAKE_IG_WEBHOOK_URL in .env (or use instagrapi)")
+    raise RuntimeError(
+        f"Instagram upload not configured for lang={lang}. Fix:\n  " +
+        "\n  ".join(missing)
+    )
 
 
 def upload_reel(video_path, caption, lang):

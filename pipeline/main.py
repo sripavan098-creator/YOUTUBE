@@ -70,10 +70,6 @@ def _clean_dict(script):
 
 CFG = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 
-from pipeline import ig_once as _ig_once  # noqa: E402
-_ig_once.install(db, publish_ig)
-
-
 # Angle generation costs one LLM call per story, so generate for a wider pool than we
 # need: skipped or failed stories must not leave a channel short of its 4 videos.
 ANGLE_POOL = 4
@@ -179,41 +175,22 @@ def _repeats_recent(channel, story, threshold=0.6):
     return False
 
 
-def _channel_filter_from_args(args):
-    raw = None
-    for index, arg in enumerate(args):
-        if arg == "--only":
-            if index + 1 >= len(args) or args[index + 1].startswith("--"):
-                raise SystemExit("--only requires a comma-separated channel list (for example: te)")
-            raw = args[index + 1]
-            break
-        if arg.startswith("--only="):
-            raw = arg.split("=", 1)[1]
-            break
-    if raw is None:
-        return None
-    channels = {channel.strip() for channel in raw.split(",") if channel.strip()}
-    if not channels:
-        raise SystemExit("--only requires at least one channel")
-    unknown = channels - CFG["channels"].keys()
-    if unknown:
-        raise SystemExit("unknown channel selection: " + ", ".join(sorted(unknown)))
-    return channels
-
-
-def morning(slot_offset: int = 0, only_channels=None):
-    """Run one production batch, optionally restricted to selected channels.
+def morning(slot_offset: int = 0):
+    """Run one production batch per channel.
 
     publish_yt._slot() maps (slot_offset + i) % num_configured_slots to one of
     yt_start / yt_start_2 / yt_start_3 / yt_start_4.
 
-    With 2 channels x 4 slots = 8 YT Shorts per day -> 240 in 30 days.
+    4-slot schedule (shorts_per_day=4):
+      batch 0  slot_offset=0  → yt_start   08:30
+      batch 1  slot_offset=1  → yt_start_2 13:00
+      batch 2  slot_offset=2  → yt_start_3 18:00
+      batch 3  slot_offset=3  → yt_start_4 21:00
+
+    With 2 channels × 4 slots = 8 YT Shorts per day → 240 in 30 days.
     """
     day = datetime.date.today().isoformat()
-    channels = {
-        channel: settings for channel, settings in CFG["channels"].items()
-        if only_channels is None or channel in only_channels
-    }
+    channels = CFG["channels"]
     langs = [c["lang"] for c in channels.values()]
 
     trend_items = trends.fetch_all(CFG) if CFG.get("trends", True) else []
@@ -397,11 +374,20 @@ evening = batch1
 
 
 def pump_ig():
+    """Post any IG queue items whose publish_at time has passed.
+
+    Called every 15 minutes by the scheduler daemon, and once after --now
+    via run_daily.sh --once. Logs clearly when nothing is queued.
+    """
     now = datetime.datetime.now().isoformat(timespec="seconds")
-    for row_id, sid, channel, path, caption in db.due_ig(now):
+    due = db.due_ig(now)
+    if not due:
+        print(f"  [ig] no posts due at {now}", flush=True)
+        return
+    print(f"  [ig] {len(due)} post(s) due", flush=True)
+    for row_id, sid, channel, path, caption in due:
         try:
             out_dir = ROOT / "out"
-            # Prefer the designed IG cover (1080×1920) for Instagram
             ig_cover_path = out_dir / f"{sid}_{channel}_ig_cover.jpg"
             yt_thumb_path = out_dir / f"{sid}_{channel}_thumb.jpg"
             if ig_cover_path.exists():
@@ -413,15 +399,15 @@ def pump_ig():
             publish_ig.publish(channel, path, caption, f"{sid}_{channel}.mp4",
                                thumbnail=thumbnail)
             db.mark_ig(row_id, "done")
-            print(f"IG posted story {sid} on {channel}")
+            print(f"  [ig] ✅ posted sid={sid} channel={channel}", flush=True)
         except Exception as e:
             db.mark_ig(row_id, "failed")
-            print(f"IG failed story {sid}: {e}")
+            print(f"  [ig] ❌ failed sid={sid} channel={channel}: {e}", flush=True)
 
 
 def main():
     if "--now" in sys.argv:
-        morning(only_channels=_channel_filter_from_args(sys.argv[1:]))
+        morning()
     elif "--evening" in sys.argv or "--batch1" in sys.argv:
         batch1()
     elif "--batch2" in sys.argv:
