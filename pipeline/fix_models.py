@@ -19,7 +19,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # Preference order. Anything not returned by the probe is skipped.
 GROQ_PREFS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
-GEMINI_PREFS = ["gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.5-flash-lite"]
+GEMINI_PREFS = ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest", "gemini-1.0-pro"]
 
 
 def pick(ids, prefs, contains=None):

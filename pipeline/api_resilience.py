@@ -170,12 +170,19 @@ def _call_groq(system: str, prompt: str, model: str, temp: float) -> str:
     keys = groq_keys()
     if not keys:
         raise RuntimeError("No GROQ_API_KEY configured")
+    # Map internal model names → Groq model IDs (Groq has its own model catalog)
+    _groq_model_map = {
+        "openai/gpt-oss-120b":      "llama-3.3-70b-versatile",
+        "gemini-1.5-flash-latest":  "llama-3.1-8b-instant",
+        "gemini-1.5-pro-latest":    "llama-3.3-70b-versatile",
+    }
+    groq_model = _groq_model_map.get(model, "llama-3.3-70b-versatile")
     for key in keys:
         for attempt in range(MAX_ATTEMPTS):
             try:
                 c = OpenAI(api_key=key, base_url="https://api.groq.com/openai/v1", timeout=60)
                 result = c.chat.completions.create(
-                    model=model, temperature=temp, max_tokens=4000,
+                    model=groq_model, temperature=temp, max_tokens=4000,
                     messages=[{"role": "system", "content": system},
                               {"role": "user",   "content": prompt}],
                 ).choices[0].message.content
@@ -232,9 +239,9 @@ def _call_openrouter(system: str, prompt: str, model: str, temp: float) -> str:
         raise RuntimeError("No OPENROUTER_API_KEY configured")
     # Map our internal model names to OpenRouter equivalents
     model_map = {
-        "openai/gpt-oss-120b": "openai/gpt-4o-mini",
-        "gemini-3.5-flash-lite": "google/gemini-flash-1.5",
-        "gemini-3.5-flash": "google/gemini-pro-1.5",
+        "openai/gpt-oss-120b":     "openai/gpt-4o-mini",
+        "gemini-1.5-flash-latest": "google/gemini-flash-1.5",
+        "gemini-1.5-pro-latest":   "google/gemini-pro-1.5",
     }
     or_model = model_map.get(model, "google/gemini-flash-1.5")
     for attempt in range(MAX_ATTEMPTS):

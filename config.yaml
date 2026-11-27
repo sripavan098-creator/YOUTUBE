@@ -64,8 +64,8 @@ stories_per_channel: 8   # raised from 4 → 8 so each of 4 daily batches gets 2
 longform_per_week: 2
 layouts: [list, explainer, versus, timeline]
 model_primary: openai/gpt-oss-120b
-model_fallback: gemini-3.5-flash-lite
-model_fallback2: gemini-3.5-flash
+model_fallback: gemini-1.5-flash-latest
+model_fallback2: gemini-1.5-pro-latest
 ig_daily: 6              # raised from 3 → 6 to match 4 Shorts/day cadence (morning + evening IG)
 yt_step_min: 20
 yt_public_after_audit: false
