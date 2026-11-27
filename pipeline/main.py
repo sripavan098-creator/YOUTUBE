@@ -374,11 +374,20 @@ evening = batch1
 
 
 def pump_ig():
+    """Post any IG queue items whose publish_at time has passed.
+
+    Called every 15 minutes by the scheduler daemon, and once after --now
+    via run_daily.sh --once. Logs clearly when nothing is queued.
+    """
     now = datetime.datetime.now().isoformat(timespec="seconds")
-    for row_id, sid, channel, path, caption in db.due_ig(now):
+    due = db.due_ig(now)
+    if not due:
+        print(f"  [ig] no posts due at {now}", flush=True)
+        return
+    print(f"  [ig] {len(due)} post(s) due", flush=True)
+    for row_id, sid, channel, path, caption in due:
         try:
             out_dir = ROOT / "out"
-            # Prefer the designed IG cover (1080×1920) for Instagram
             ig_cover_path = out_dir / f"{sid}_{channel}_ig_cover.jpg"
             yt_thumb_path = out_dir / f"{sid}_{channel}_thumb.jpg"
             if ig_cover_path.exists():
@@ -390,10 +399,10 @@ def pump_ig():
             publish_ig.publish(channel, path, caption, f"{sid}_{channel}.mp4",
                                thumbnail=thumbnail)
             db.mark_ig(row_id, "done")
-            print(f"IG posted story {sid} on {channel}")
+            print(f"  [ig] ✅ posted sid={sid} channel={channel}", flush=True)
         except Exception as e:
             db.mark_ig(row_id, "failed")
-            print(f"IG failed story {sid}: {e}")
+            print(f"  [ig] ❌ failed sid={sid} channel={channel}: {e}", flush=True)
 
 
 def main():
